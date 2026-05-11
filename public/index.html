@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SyncCanvas - 分布式协作画布</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1a1a2e;
+      color: #eee;
+      overflow: hidden;
+      height: 100vh;
+    }
+
+    #toolbar {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      background: #16213e;
+      padding: 12px 16px;
+      border-radius: 12px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+      z-index: 100;
+    }
+
+    .tool-btn {
+      width: 36px;
+      height: 36px;
+      border: none;
+      border-radius: 8px;
+      background: #0f3460;
+      color: #eee;
+      cursor: pointer;
+      font-size: 16px;
+      transition: all 0.2s;
+    }
+
+    .tool-btn:hover {
+      background: #e94560;
+    }
+
+    .tool-btn.active {
+      background: #e94560;
+      box-shadow: 0 0 12px rgba(233,69,96,0.5);
+    }
+
+    #colorPicker {
+      width: 36px;
+      height: 36px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      padding: 0;
+    }
+
+    #strokeWidth {
+      width: 80px;
+      accent-color: #e94560;
+    }
+
+    #canvas {
+      display: block;
+      cursor: crosshair;
+    }
+
+    #status {
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      background: #16213e;
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+
+    #status .connected { color: #4ade80; }
+    #status .disconnected { color: #f87171; }
+
+    #clearBtn {
+      background: #dc2626;
+    }
+
+    #clearBtn:hover {
+      background: #ef4444;
+    }
+  </style>
+</head>
+<body>
+  <!-- 工具栏 -->
+  <div id="toolbar">
+    <button class="tool-btn active" id="penBtn" title="画笔">✏️</button>
+    <button class="tool-btn" id="eraserBtn" title="橡皮擦">🧹</button>
+    <input type="color" id="colorPicker" value="#ffffff" title="颜色">
+    <input type="range" id="strokeWidth" min="1" max="50" value="3" title="笔触粗细">
+    <button class="tool-btn" id="clearBtn" title="清空画布">🗑️</button>
+  </div>
+
+  <!-- 画布 -->
+  <canvas id="canvas"></canvas>
+
+  <!-- 状态栏 -->
+  <div id="status">
+    状态: <span id="wsStatus" class="disconnected">未连接</span> |
+    用户: <span id="userId">-</span> |
+    在线: <span id="onlineCount">0</span>
+  </div>
+
+  <script>
+    // ==================== 画布设置 ====================
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    // 全屏画布
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      // 填充背景色
+      ctx.fillStyle = '#1a1a2e';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    // ==================== 绘图状态 ====================
+    let isDrawing = false;
+    let currentTool = 'pen'; // 'pen' | 'eraser'
+    let currentColor = '#ffffff';
+    let currentWidth = 3;
+    let lastX = 0;
+    let lastY = 0;
+
+    // 当前笔画的数据
+    let currentStrokeId = null;
+    let currentPoints = [];
+
+    // ==================== 工具栏事件 ====================
+    document.getElementById('penBtn').addEventListener('click', () => {
+      currentTool = 'pen';
+      document.getElementById('penBtn').classList.add('active');
+      document.getElementById('eraserBtn').classList.remove('active');
+    });
+
+    document.getElementById('eraserBtn').addEventListener('click', () => {
+      currentTool = 'eraser';
+      document.getElementById('eraserBtn').classList.add('active');
+      document.getElementById('penBtn').classList.remove('active');
+    });
+
+    document.getElementById('colorPicker').addEventListener('input', (e) => {
+      currentColor = e.target.value;
+    });
+
+    document.getElementById('strokeWidth').addEventListener('input', (e) => {
+      currentWidth = parseInt(e.target.value);
+    });
+
+    document.getElementById('clearBtn').addEventListener('click', () => {
+      ctx.fillStyle = '#1a1a2e';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    });
+
+    // ==================== 画布鼠标事件 ====================
+    canvas.addEventListener('mousedown', (e) => {
+      isDrawing = true;
+      lastX = e.clientX;
+      lastY = e.clientY;
+
+      // 生成新的 stroke_id
+      currentStrokeId = crypto.randomUUID();
+      currentPoints = [{
+        x: e.clientX,
+        y: e.clientY,
+        t: Date.now()
+      }];
+
+      // 开始画（本地预览）
+      ctx.beginPath();
+      ctx.moveTo(lastX, lastY);
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+      if (!isDrawing) return;
+
+      // 记录点
+      currentPoints.push({
+        x: e.clientX,
+        y: e.clientY,
+        t: Date.now()
+      });
+
+      // 本地绘制
+      const color = currentTool === 'eraser' ? '#1a1a2e' : currentColor;
+      const width = currentTool === 'eraser' ? currentWidth * 3 : currentWidth;
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.lineTo(e.clientX, e.clientY);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(e.clientX, e.clientY);
+
+      lastX = e.clientX;
+      lastY = e.clientY;
+    });
+
+    canvas.addEventListener('mouseup', () => {
+      isDrawing = false;
+      currentPoints = [];
+      currentStrokeId = null;
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+      isDrawing = false;
+      currentPoints = [];
+      currentStrokeId = null;
+    });
+
+    // ==================== WebSocket 连接 ====================
+    // TODO: 第 2-4 天实现 WebSocket 连接逻辑
+    // const ws = new WebSocket('ws://localhost:3000/ws');
+
+    console.log('[SyncCanvas] 前端骨架已加载');
+    console.log('[SyncCanvas] WebSocket 连接将在后续实现');
+  </script>
+</body>
+</html>
