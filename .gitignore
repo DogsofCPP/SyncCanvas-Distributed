@@ -1,0 +1,3 @@
+node_modules/
+target/
+persistence-service/target/
