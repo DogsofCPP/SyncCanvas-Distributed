@@ -1,53 +1,82 @@
+/**
+ * 这是一个画布应用的主函数，使用IIFE（立即调用函数表达式）封装，避免全局变量污染
+ */
 (function () {
-  const canvas = document.getElementById('canvas');
-  const ctx = canvas.getContext('2d');
-  const penBtn = document.getElementById('penBtn');
-  const eraserBtn = document.getElementById('eraserBtn');
-  const colorPicker = document.getElementById('colorPicker');
-  const strokeWidth = document.getElementById('strokeWidth');
-  const widthValue = document.getElementById('widthValue');
-  const undoBtn = document.getElementById('undoBtn');
-  const redoBtn = document.getElementById('redoBtn');
-  const clearBtn = document.getElementById('clearBtn');
-  const wsStatus = document.getElementById('wsStatus');
-  const userIdEl = document.getElementById('userId');
-  const onlineCountEl = document.getElementById('onlineCount');
-  const sequenceIdEl = document.getElementById('sequenceId');
 
-  const backgroundColor = '#ffffff';
-  const wsUrl = 'ws://localhost:3000/ws';
-  const operations = [];
-  const undoneKeys = new Set();
-  const strokeRenderState = new Map();
+  // 获取DOM元素
+  const canvas = document.getElementById('canvas'); // 画布元素
+  const ctx = canvas.getContext('2d'); // 画布2D上下文
+  const penBtn = document.getElementById('penBtn'); // 画笔按钮
+  const eraserBtn = document.getElementById('eraserBtn'); // 橡皮擦按钮
+  const colorPicker = document.getElementById('colorPicker'); // 颜色选择器
+  const strokeWidth = document.getElementById('strokeWidth'); // 笔画宽度滑块
+  const widthValue = document.getElementById('widthValue'); // 宽度显示值
+  const undoBtn = document.getElementById('undoBtn'); // 撤销按钮
+  const redoBtn = document.getElementById('redoBtn'); // 重做按钮
+  const clearBtn = document.getElementById('clearBtn'); // 清空按钮
+  const wsStatus = document.getElementById('wsStatus'); // WebSocket状态显示
+  const userIdEl = document.getElementById('userId'); // 用户ID显示
+  const onlineCountEl = document.getElementById('onlineCount'); // 在线人数显示
+  const sequenceIdEl = document.getElementById('sequenceId'); // 序列ID显示
 
-  let currentUserId = null;
-  let latestSequenceId = 0;
-  let localSequenceId = Date.now();
-  let isDrawing = false;
-  let lastPoint = null;
 
+
+  // 常量定义
+  const backgroundColor = '#ffffff'; // 背景色
+  const wsUrl = 'ws://localhost:3000/ws'; // WebSocket连接URL
+
+
+  // 操作历史和状态管理
+  const operations = []; // 存储所有操作记录
+  const undoneKeys = new Set(); // 存储已撤销操作的键
+  const strokeRenderState = new Map(); // 存储笔画渲染状态
+
+
+
+  // 变量声明
+  let currentUserId = null; // 当前用户ID
+  let latestSequenceId = 0; // 最新序列ID
+  let localSequenceId = Date.now(); // 本地序列ID
+  let isDrawing = false; // 是否正在绘制的标志
+  let lastPoint = null; // 上一个点的坐标
+
+  /**
+   * 调整画布大小以适应窗口
+   */
   function resizeCanvas() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    redrawCanvas();
+    canvas.width = window.innerWidth; // 设置画布宽度为窗口宽度
+    canvas.height = window.innerHeight; // 设置画布高度为窗口高度
+    redrawCanvas(); // 重绘画布内容
   }
 
+  /**
+   * 清空画布
+   */
   function clearCanvas() {
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = backgroundColor;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(1, 0, 0, 1, 0, 0); // 重置变换矩阵
+    ctx.fillStyle = backgroundColor; // 设置填充色为背景色
+    ctx.fillRect(0, 0, canvas.width, canvas.height); // 填充整个画布
   }
 
+  /**
+   * 获取鼠标在画布上的坐标
+   * @param {Object} event - 鼠标事件对象
+   * @returns {Object} 包含x和y坐标的对象
+   */
   function getCanvasPoint(event) {
-    const rect = canvas.getBoundingClientRect();
+    const rect = canvas.getBoundingClientRect(); // 获取画布的位置信息
     return {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top
+      x: event.clientX - rect.left, // 计算相对于画布的x坐标
+      y: event.clientY - rect.top  // 计算相对于画布的y坐标
     };
   }
 
+  /**
+   * 获取当前激活的工具
+   * @returns {string} 当前工具名称
+   */
   function getActiveTool() {
-    return collector.getStatus().tool;
+    return collector.getStatus().tool; // 从collector获取当前工具状态
   }
 
   function getDrawStyle(action, color, width) {
