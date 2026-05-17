@@ -2,6 +2,7 @@
   "dependencies": {
     "ioredis": "^5.4.2",
     "kafkajs": "^2.2.4",
+    "mongodb": "^7.2.0",
     "ws": "^8.20.1"
   }
 }

@@ -15,6 +15,14 @@ const DEFAULT_BROKER = process.env.KAFKA_BROKER || 'localhost:9092';
 const CANVAS_OPERATIONS_TOPIC = 'canvas-operations';
 
 /**
+ * 全局 Kafka 实例，Producer 和 Consumer 可以共用相同 Broker 配置。
+ */
+const kafka = new Kafka({
+  clientId: 'synccanvas-gateway',
+  brokers: [DEFAULT_BROKER],
+});
+
+/**
  * Canvas 操作 Kafka Producer 类，封装连接、发送和关闭逻辑。
  */
 class KafkaCanvasProducer {
@@ -22,11 +30,7 @@ class KafkaCanvasProducer {
    * 创建 Kafka Producer 实例。
    */
   constructor() {
-    this.kafka = new Kafka({
-      clientId: 'synccanvas-gateway',
-      brokers: [DEFAULT_BROKER],
-    });
-    this.producer = this.kafka.producer();
+    this.producer = kafka.producer();
     this.connected = false;
   }
 
@@ -54,7 +58,7 @@ class KafkaCanvasProducer {
       throw new Error('Kafka Producer 尚未初始化');
     }
 
-    // Kafka 消息 value 使用 JSON 字符串，方便 Java persistence-service 用 Jackson 解析。
+    // Kafka 消息 value 使用 JSON 字符串，方便 Consumer 直接解析后写入 MongoDB。
     await this.producer.send({
       topic: CANVAS_OPERATIONS_TOPIC,
       messages: [
@@ -109,6 +113,9 @@ async function closeKafkaProducer() {
 }
 
 module.exports = {
+  CANVAS_OPERATIONS_TOPIC,
+  DEFAULT_BROKER,
+  kafka,
   initKafkaProducer,
   sendCanvasOperation,
   closeKafkaProducer,
