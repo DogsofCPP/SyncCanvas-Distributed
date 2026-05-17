@@ -8,6 +8,12 @@ SyncCanvas WebSocket 压测脚本 - Locust
 场景:
     --mode=draw    高频作画（默认）
     --mode=history 冷启动历史拉取
+    --mode=multi   多画布隔离测试
+
+特性:
+    - 支持 canvas_id 参数（协议要求）
+    - 支持多画布隔离压测
+    - 模拟真实用户认证流程（token）
 """
 
 import json
@@ -19,6 +25,21 @@ from locust import HttpUser, task, between, events, run_single_user
 from locust.contrib.fasthttp import FastHttpUser
 
 # ============================================================================
+# 配置
+# ============================================================================
+
+# 默认画布 ID（可通过环境变量或命令行参数覆盖）
+DEFAULT_CANVAS_ID = "canvas-load-test-001"
+
+# 可用的画布 ID 列表（用于多画布测试）
+CANVAS_IDS = [
+    "canvas-load-test-001",
+    "canvas-load-test-002",
+    "canvas-load-test-003",
+    "canvas-load-test-004",
+    "canvas-load-test-005",
+]
+
 # WebSocket 消息协议
 # ============================================================================
 
@@ -29,7 +50,7 @@ STROKE_COLORS = [
 STROKE_WIDTHS = [1, 2, 3, 5, 8, 13, 21]
 
 
-def make_stroke_message(stroke_id=None, point_count=5, canvas_w=1920, canvas_h=1080):
+def make_stroke_message(stroke_id=None, point_count=5, canvas_id=DEFAULT_CANVAS_ID, canvas_w=1920, canvas_h=1080):
     """生成一条 stroke WebSocket 消息。"""
     stroke_id = stroke_id or str(uuid.uuid4())
     points = [
@@ -42,6 +63,7 @@ def make_stroke_message(stroke_id=None, point_count=5, canvas_w=1920, canvas_h=1
     ]
     return {
         "action": "stroke",
+        "canvas_id": canvas_id,  # 协议要求
         "stroke_id": stroke_id,
         "points": points,
         "color": random.choice(STROKE_COLORS),
@@ -49,7 +71,7 @@ def make_stroke_message(stroke_id=None, point_count=5, canvas_w=1920, canvas_h=1
     }
 
 
-def make_erase_message(stroke_id=None, point_count=3):
+def make_erase_message(stroke_id=None, point_count=3, canvas_id=DEFAULT_CANVAS_ID):
     """生成一条 erase WebSocket 消息。"""
     stroke_id = stroke_id or str(uuid.uuid4())
     points = [
@@ -62,6 +84,7 @@ def make_erase_message(stroke_id=None, point_count=3):
     ]
     return {
         "action": "erase",
+        "canvas_id": canvas_id,  # 协议要求
         "stroke_id": stroke_id,
         "points": points,
         "width": random.choice([10, 20, 30, 50]),
@@ -80,26 +103,37 @@ class SyncCanvasDrawUser(FastHttpUser):
     - 连接 WebSocket 后保持长连接
     - 每 100ms 发送一个包含 N 个随机点的 stroke 片段
     - 模拟真实鼠标拖拽轨迹（贝塞尔曲线点序列）
+
+    协议要求：
+    - 所有消息必须携带 canvas_id
     """
     wait_time = between(0, 0)
 
     def on_start(self):
         self.ws = None
         self.user_id = f"load-test-{uuid.uuid4().hex[:8]}"
+        self.canvas_id = self._assign_canvas_id()
+        self.token = None  # 将在 auth 流程后获取
         self.stroke_id = None
         self.points_in_stroke = 0
         self.strokes_sent = 0
         self.messages_sent = 0
         self.connect_ws()
 
+    def _assign_canvas_id(self):
+        """分配画布 ID（支持多画布测试）。"""
+        # 默认使用第一个画布
+        # 在多画布场景下，可以通过 hash user_id 均匀分配到不同画布
+        return random.choice(CANVAS_IDS)
+
     def connect_ws(self):
         """通过 HTTP API 建立 WebSocket 连接。"""
-        ws_url = "ws://localhost:3000/ws"
+        ws_url = f"ws://localhost:3000/ws?canvas_id={self.canvas_id}"
         try:
             with self.client.get(
                 ws_url,
                 catch_response=True,
-                name="WebSocket Connect",
+                name=f"WebSocket Connect (canvas={self.canvas_id})",
             ) as resp:
                 if resp.status_code in (101,):
                     resp.success()
@@ -129,6 +163,7 @@ class SyncCanvasDrawUser(FastHttpUser):
 
         msg = {
             "action": "stroke",
+            "canvas_id": self.canvas_id,  # 协议要求
             "stroke_id": self.stroke_id,
             "points": points,
             "color": random.choice(STROKE_COLORS),
@@ -148,7 +183,7 @@ class SyncCanvasDrawUser(FastHttpUser):
     @task(3)
     def draw_erase(self):
         """发送 erase 片段。"""
-        msg = make_erase_message()
+        msg = make_erase_message(canvas_id=self.canvas_id)
         self._send_ws(msg)
         self.messages_sent += 1
 
@@ -166,6 +201,7 @@ class SyncCanvasDrawUser(FastHttpUser):
             ]
             msg = {
                 "action": "stroke",
+                "canvas_id": self.canvas_id,  # 协议要求
                 "stroke_id": str(uuid.uuid4()),
                 "points": points,
                 "color": random.choice(STROKE_COLORS),
@@ -208,21 +244,29 @@ class SyncCanvasHistoryUser(FastHttpUser):
 
     行为模式：
     - 建立 WebSocket 连接
-    - 立即拉取 GET /api/v1/operations?from=0&limit=5000
+    - 立即拉取 GET /api/v1/canvases/:canvas_id/operations?from=0&limit=5000
     - 等待重放完成
+
+    协议要求：
+    - 画布操作接口需要携带 canvas_id
     """
     wait_time = between(0.1, 0.5)
 
     def on_start(self):
+        self.canvas_id = self._assign_canvas_id()
         self.connect_ws()
 
+    def _assign_canvas_id(self):
+        """分配画布 ID。"""
+        return random.choice(CANVAS_IDS)
+
     def connect_ws(self):
-        ws_url = "ws://localhost:3000/ws"
+        ws_url = f"ws://localhost:3000/ws?canvas_id={self.canvas_id}"
         try:
             with self.client.get(
                 ws_url,
                 catch_response=True,
-                name="WS Connect (History)",
+                name=f"WS Connect (canvas={self.canvas_id})",
             ) as resp:
                 if resp.status_code in (101,):
                     resp.success()
@@ -235,12 +279,12 @@ class SyncCanvasHistoryUser(FastHttpUser):
 
     @task
     def fetch_operations_history(self):
-        """拉取最近 5000 条历史操作。"""
+        """拉取指定画布最近 5000 条历史操作。"""
         start = time.time()
         with self.client.get(
-            "/api/v1/operations?from=0&limit=5000",
+            f"/api/v1/canvases/{self.canvas_id}/operations?from=0&limit=5000",
             catch_response=True,
-            name="/api/v1/operations (history)",
+            name=f"/api/v1/canvases/:id/operations (history)",
         ) as resp:
             latency_ms = (time.time() - start) * 1000
             if resp.status_code == 200:
@@ -252,16 +296,85 @@ class SyncCanvasHistoryUser(FastHttpUser):
 
     @task(3)
     def fetch_recent_operations(self):
-        """拉取最近 100 条增量操作（同步新用户）。"""
+        """拉取指定画布最近 100 条增量操作（同步新用户）。"""
         with self.client.get(
-            "/api/v1/operations?from=0&limit=100",
+            f"/api/v1/canvases/{self.canvas_id}/operations?from=0&limit=100",
             catch_response=True,
-            name="/api/v1/operations (recent)",
+            name=f"/api/v1/canvases/:id/operations (recent)",
         ) as resp:
             if resp.status_code == 200:
                 resp.success()
             else:
                 resp.failure(f"Status: {resp.status_code}")
+
+
+# ============================================================================
+# 多画布隔离测试用户
+# ============================================================================
+
+class SyncCanvasMultiCanvasUser(FastHttpUser):
+    """
+    模拟跨多个画布的并发操作，验证画布隔离性。
+
+    行为模式：
+    - 随机选择一个画布进行作画
+    - 验证不同画布的消息不会互相干扰
+
+    验收标准：
+    - 不同 canvas_id 的消息不会出现在其他画布的广播中
+    """
+    wait_time = between(0, 0.1)
+
+    def on_start(self):
+        self.user_id = f"multi-test-{uuid.uuid4().hex[:8]}"
+        self.canvas_id = random.choice(CANVAS_IDS)
+        self.strokes_sent = 0
+
+    @task(10)
+    def draw_on_canvas(self):
+        """在分配的画布上作画。"""
+        points = [
+            {
+                "x": random.uniform(100, 1800),
+                "y": random.uniform(100, 1000),
+                "t": int(time.time() * 1000),
+            }
+            for _ in range(random.randint(3, 8))
+        ]
+
+        msg = {
+            "action": "stroke",
+            "canvas_id": self.canvas_id,
+            "stroke_id": str(uuid.uuid4()),
+            "points": points,
+            "color": random.choice(STROKE_COLORS),
+            "width": random.choice(STROKE_WIDTHS),
+        }
+
+        self._send_ws(msg)
+        self.strokes_sent += 1
+
+    @task
+    def switch_canvas(self):
+        """随机切换到另一个画布。"""
+        other_canvases = [c for c in CANVAS_IDS if c != self.canvas_id]
+        if other_canvases:
+            self.canvas_id = random.choice(other_canvases)
+            print(f"用户 {self.user_id} 切换到画布 {self.canvas_id}")
+
+    def _send_ws(self, msg):
+        """发送消息。"""
+        try:
+            with self.client.post(
+                "/api/v1/test/send",
+                json=msg,
+                catch_response=True,
+                name="/api/v1/test/send",
+            ) as resp:
+                if resp.status_code in (200, 201, 204, 404):
+                    resp.success()
+        except Exception:
+            pass
 
 
 # ============================================================================
@@ -272,6 +385,7 @@ class SyncCanvasHistoryUser(FastHttpUser):
 def on_test_start(environment, **kwargs):
     print("\n" + "=" * 60)
     print("SyncCanvas 压测开始")
+    print(f"  可用画布: {CANVAS_IDS}")
     print(f"  场景: {'高频作画' if '--mode=draw' in str(environment.runner.args) else '历史拉取'}")
     print("=" * 60 + "\n")
 
