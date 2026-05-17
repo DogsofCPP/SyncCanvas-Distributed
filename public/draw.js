@@ -28,7 +28,8 @@
 
   // 操作历史和状态管理
   const operations = []; // 存储所有操作记录
-  const undoneKeys = new Set(); // 存储已撤销操作的键
+  const undoneKeys = new Set(); // 存储已撤销操作的键（已废弃，改用 undoneStrokes）
+  const undoneStrokes = new Set(); // 存储已撤销的 stroke_id
   const strokeRenderState = new Map(); // 存储笔画渲染状态
 
 
@@ -234,7 +235,11 @@
     clearCanvas();
     strokeRenderState.clear();
     operations
-      .filter((operation) => !undoneKeys.has(getOperationKey(operation)))
+      .filter((operation) => {
+        if (undoneStrokes.has(operation.stroke_id)) return false;
+        if (undoneKeys.has(getOperationKey(operation))) return false;
+        return true;
+      })
       .sort(compareOperations)
       .forEach((operation) => drawOperation(operation, strokeRenderState));
   }
@@ -313,27 +318,42 @@
   }
 
   function undoLastOperation() {
+    // 找到最后一个可见笔画的 stroke_id
+    const visibleStrokes = new Set();
     const visibleOperations = operations
-      .filter((operation) => !undoneKeys.has(getOperationKey(operation)))
+      .filter((operation) => {
+        if (undoneStrokes.has(operation.stroke_id)) return false;
+        if (undoneKeys.has(getOperationKey(operation))) return false;
+        return true;
+      })
       .sort(compareOperations);
-    const operation = visibleOperations[visibleOperations.length - 1];
 
-    if (!operation) return;
+    if (visibleOperations.length === 0) return;
 
-    undoneKeys.add(getOperationKey(operation));
+    // 获取最后一个操作的 stroke_id
+    const lastOperation = visibleOperations[visibleOperations.length - 1];
+    const lastStrokeId = lastOperation.stroke_id;
+
+    // 撤销整个笔画（所有相同 stroke_id 的操作）
+    undoneStrokes.add(lastStrokeId);
     redrawCanvas();
     updateUndoRedoButtons();
   }
 
   function redoLastOperation() {
+    // 找到最后一个被撤销的笔画
     const undoneOperations = operations
-      .filter((operation) => undoneKeys.has(getOperationKey(operation)))
+      .filter((operation) => undoneKeys.has(getOperationKey(operation)) || undoneStrokes.has(operation.stroke_id))
       .sort(compareOperations);
-    const operation = undoneOperations[undoneOperations.length - 1];
 
-    if (!operation) return;
+    if (undoneOperations.length === 0) return;
 
-    undoneKeys.delete(getOperationKey(operation));
+    // 获取最后一个被撤销操作的 stroke_id
+    const lastOperation = undoneOperations[undoneOperations.length - 1];
+    const lastStrokeId = lastOperation.stroke_id;
+
+    // 恢复整个笔画
+    undoneStrokes.delete(lastStrokeId);
     redrawCanvas();
     updateUndoRedoButtons();
   }
@@ -357,6 +377,7 @@
   clearBtn.addEventListener('click', () => {
     operations.length = 0;
     undoneKeys.clear();
+    undoneStrokes.clear();
     latestSequenceId = 0;
     redrawCanvas();
     updateSequenceStatus();
