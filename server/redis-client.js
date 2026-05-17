@@ -67,8 +67,9 @@ redisSubscriber.on('error', (err) => {
  *
  * @returns {Promise<number>} 序列号
  */
-async function getNextSequenceId() {
-  const sequenceId = await redisClient.incr('canvas:sequence_id');
+async function getNextSequenceId(canvasId = 'canvas-001') {
+  // v2.0 要求 sequence_id 按 canvas_id 隔离，因此 Redis key 使用 seq:<canvas_id>。
+  const sequenceId = await redisClient.incr(`seq:${canvasId}`);
   return sequenceId;
 }
 
