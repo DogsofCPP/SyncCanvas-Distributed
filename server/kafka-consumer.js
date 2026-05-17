@@ -45,7 +45,8 @@ let flushTimer = null;
  */
 async function initKafkaConsumer() {
   await consumer.connect();
-  await consumer.subscribe({ topic: CANVAS_OPERATIONS_TOPIC, fromBeginning: false });
+  // 从头订阅可以避免服务首次启动时 Topic 已有未处理消息却被跳过；写入 MongoDB 使用 upsert，重复消费不会重复插入。
+  await consumer.subscribe({ topic: CANVAS_OPERATIONS_TOPIC, fromBeginning: true });
 
   // 每隔 1 秒检查一次缓冲区，避免低流量时消息长时间停留在内存中。
   flushTimer = setInterval(() => {
