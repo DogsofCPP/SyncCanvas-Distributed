@@ -21,6 +21,12 @@ const {
   closeRedis,
   CHANNEL_CANVAS_OPERATIONS,
 } = require('./redis-client');
+const {
+  connectMongo,
+  saveStroke,
+  getStrokesByCanvas,
+  closeMongo,
+} = require('./mongo-client');
 
 // ==================== 配置 ====================
 const PORT = process.env.PORT || 3000;
@@ -58,6 +64,26 @@ const wss = new WebSocket.Server({ server: httpServer, path: WS_PATH });
 
 // 在线用户映射: userId -> WebSocket
 const clients = new Map();
+
+// 默认画布 ID
+const DEFAULT_CANVAS_ID = 'default';
+
+/**
+ * 加载画布历史操作
+ *
+ * @param {string} canvasId 画布 ID
+ * @returns {Promise<Array>} 历史操作数组
+ */
+async function loadCanvasHistory(canvasId = DEFAULT_CANVAS_ID) {
+  try {
+    const history = await getStrokesByCanvas(canvasId, { limit: 10000 });
+    console.log(`[MongoDB] 已加载历史操作: ${history.length} 条`);
+    return history;
+  } catch (err) {
+    console.error(`[!] 加载历史失败: ${err.message}`);
+    return [];
+  }
+}
 
 /**
  * 生成简单 userId。
@@ -116,21 +142,20 @@ async function buildCanvasOperation(message, userId) {
  * @param {Buffer|string} data WebSocket 原始消息
  */
 async function handleClientMessage(userId, data) {
-  // 先解析客户端 JSON 消息。
   const message = JSON.parse(data.toString());
-  console.log(`[收到消息] ${userId}:`, JSON.stringify(message));
+  console.log(`[收到消息] userId=${userId}, stroke_id=${message.stroke_id}, points=${message.points?.length || 0}`);
 
-  // 组装持久化需要的完整操作对象（从 Redis INCR 获取 sequence_id）。
   const operation = await buildCanvasOperation(message, userId);
-  console.log(`[序列号] sequence_id=${operation.sequence_id} (由 Redis INCR 生成)`);
 
-  // 通过 Redis Pub/Sub 广播给所有 WebSocket 客户端。
+  // 广播给其他客户端
   await publish(CHANNEL_CANVAS_OPERATIONS, operation);
-  console.log(`[Redis] 已广播画布操作: sequence_id=${operation.sequence_id}, user_id=${operation.user_id}`);
 
-  // 将绘画操作发送到 Kafka，由 Java persistence-service 负责消费和写入 MongoDB。
+  // 发送到 Kafka
   await sendCanvasOperation(operation);
-  console.log(`[Kafka] 已发送画布操作: sequence_id=${operation.sequence_id}, user_id=${operation.user_id}`);
+
+  // 存储到 MongoDB
+  await saveStroke(operation);
+  console.log(`[完成] stroke_id=${operation.stroke_id}, 点数=${operation.points.length}`);
 }
 
 // 处理 WebSocket 连接。
@@ -146,6 +171,22 @@ wss.on('connection', async (ws) => {
     user_id: userId,
     message: '连接成功',
   }));
+
+  // 发送画布历史
+  try {
+    const history = await loadCanvasHistory();
+    if (history.length > 0) {
+      ws.send(JSON.stringify({
+        type: 'sync_response',
+        canvas_id: DEFAULT_CANVAS_ID,
+        operations: history,
+        total: history.length,
+      }));
+      console.log(`[同步] 已向 ${userId} 发送 ${history.length} 条历史操作`);
+    }
+  } catch (err) {
+    console.error(`[!] 发送历史失败: ${err.message}`);
+  }
 
   // 处理客户端消息。
   ws.on('message', async (data) => {
@@ -203,7 +244,7 @@ async function startRedisSubscription(channel) {
  * 启动 HTTP 和 WebSocket 服务。
  */
 async function startServer() {
-  // 服务启动时初始化 Kafka Producer 和 Redis 订阅。
+  await connectMongo();
   await initKafkaProducer();
   await startRedisSubscription(CHANNEL_CANVAS_OPERATIONS);
 
@@ -242,6 +283,12 @@ async function gracefulShutdown(signal) {
     await closeRedis();
   } catch (err) {
     console.error(`[!] Redis 关闭失败: ${err.message}`);
+  }
+
+  try {
+    await closeMongo();
+  } catch (err) {
+    console.error(`[!] MongoDB 关闭失败: ${err.message}`);
   } finally {
     process.exit(0);
   }

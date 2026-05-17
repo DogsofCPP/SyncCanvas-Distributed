@@ -23,7 +23,9 @@
 
   // 常量定义
   const backgroundColor = '#ffffff'; // 背景色
-  const wsUrl = 'ws://localhost:3000/ws'; // WebSocket连接URL
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsHost = window.location.host;
+  const wsUrl = `${wsProtocol}//${wsHost}/ws`; // 使用当前页面的协议和主机
 
 
   // 操作历史和状态管理
@@ -240,6 +242,13 @@
   }
 
   function handleLocalSegment(segment) {
+    // 预览片段：collector 已通过 canvas 事件绘制，无需再次绘制
+    // 这里只负责发送到服务器（collector._sendSegment 已处理）
+    if (segment.is_preview) {
+      return;
+    }
+
+    // 最终片段：添加到历史记录
     localSequenceId = Math.max(localSequenceId + 1, latestSequenceId + 1, Date.now());
     const localKey = `${segment.stroke_id}:${segment.timestamp}:${localSequenceId}`;
     const operation = normalizeOperation(segment, {
@@ -249,9 +258,24 @@
     });
 
     addOperation(operation);
+    redrawCanvas();
   }
 
   function handleRemoteOperation(message) {
+    // 预览片段：只用于实时预览，不添加到历史记录
+    if (message.is_preview) {
+      const operation = normalizeOperation(message);
+      const style = getDrawStyle(operation.action, operation.color, operation.width);
+      const lastTwoPoints = operation.points.slice(-2);
+      if (lastTwoPoints.length === 2) {
+        drawLine(lastTwoPoints[0], lastTwoPoints[1]);
+      } else if (lastTwoPoints.length === 1) {
+        drawDot(lastTwoPoints[0]);
+      }
+      return;
+    }
+
+    // 最终片段：添加到历史记录
     const operation = normalizeOperation(message);
 
     if (operation.user_id === currentUserId) {
@@ -283,6 +307,45 @@
     if (message.type === 'welcome') {
       currentUserId = message.user_id || currentUserId;
       userIdEl.textContent = currentUserId || '-';
+      return;
+    }
+
+    // 处理历史同步响应
+    if (message.type === 'sync_response') {
+      console.log(`[SyncCanvas] 收到历史同步: ${message.operations ? message.operations.length : 0} 条操作`);
+
+      if (message.operations && Array.isArray(message.operations)) {
+        // 清空当前操作列表
+        operations.length = 0;
+        undoneKeys.clear();
+        strokeRenderState.clear();
+
+        // 批量添加历史操作
+        message.operations.forEach((op) => {
+          if (op.points && op.points.length > 0) {
+            const operation = normalizeOperation(op);
+            operations.push(operation);
+          }
+        });
+
+        // 按 sequence_id 排序
+        operations.sort(compareOperations);
+
+        // 更新 latestSequenceId
+        if (message.operations.length > 0) {
+          const maxSeq = message.operations.reduce((max, op) => {
+            return Math.max(max, Number(op.sequence_id) || 0);
+          }, 0);
+          latestSequenceId = maxSeq;
+        }
+
+        // 重绘画布
+        redrawCanvas();
+        updateSequenceStatus();
+        updateUndoRedoButtons();
+
+        console.log(`[SyncCanvas] 已渲染 ${operations.length} 条历史操作`);
+      }
       return;
     }
 

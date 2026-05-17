@@ -685,7 +685,8 @@ class StrokeCollector extends EventEmitter {
     this.isDrawing = false;
 
     if (this.currentPoints.length > 0) {
-      this.emitSegment();
+      // 发送最终片段
+      this.emitSegment(true);
     }
 
     console.log('[Collector] 笔画结束:', this.currentStrokeId, {
@@ -714,40 +715,53 @@ class StrokeCollector extends EventEmitter {
   // ==================== 发送逻辑 ====================
 
   /**
-   * 定时器触发 - 发送累积的点
+   * 定时器触发 - 发送累积的点（仅用于本地预览，不发送到服务器）
    */
   flush() {
     if (!this.isDrawing || this.currentPoints.length === 0) {
       return;
     }
-    this.emitSegment();
+
+    // 只触发回调用于本地预览，不发送到服务器
+    const segment = {
+      action: this._getAction(),
+      stroke_id: this.currentStrokeId,
+      points: this.currentPoints,
+      color: this.currentColor,
+      width: this.currentWidth,
+      timestamp: Date.now(),
+      is_preview: true
+    };
+
+    // 触发回调（用于本地渲染）
+    this.emit('segment', segment);
+    // 不调用 _sendSegment，避免发送到服务器
   }
 
   /**
    * 发送片段
+   * @param {boolean} isFinal - 是否是最后一个片段（笔画结束）
    */
-  emitSegment() {
+  emitSegment(isFinal = false) {
     if (this.currentPoints.length === 0) return;
 
     let pointsToSend = this.currentPoints;
     const originalCount = this.currentPoints.length;
 
-    // DP 压缩
-    if (this.dpEnabled && this.dpEpsilon > 0 && originalCount >= 3) {
+    // DP 压缩（只在最终片段时应用）
+    if (this.dpEnabled && this.dpEpsilon > 0 && isFinal && originalCount >= 3) {
       pointsToSend = DouglasPeucker.simplify(this.currentPoints, this.dpEpsilon);
     }
 
     const segment = {
       action: this._getAction(),
       stroke_id: this.currentStrokeId,
-      points: pointsToSend,
+      points: isFinal ? pointsToSend : this.currentPoints,
       color: this.currentColor,
       width: this.currentWidth,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      is_final: isFinal
     };
-
-    // 清空当前点
-    this.currentPoints = [];
 
     // 记录统计
     this.stats.recordSend(
@@ -756,20 +770,16 @@ class StrokeCollector extends EventEmitter {
       JSON.stringify(segment).length
     );
 
-    // 打印日志
-    console.log('[Collector] 发送片段:', segment.action, {
-      strokeId: segment.stroke_id,
-      points: pointsToSend.length,
-      compressed: originalCount !== pointsToSend.length
-        ? `${originalCount} → ${pointsToSend.length}`
-        : null
-    });
-
-    // 触发回调
+    // 触发回调（用于本地渲染）
     this.emit('segment', segment);
 
-    // 发送
+    // 发送（用于服务器存储）
     this._sendSegment(segment);
+
+    // 最终片段后清空点
+    if (isFinal) {
+      this.currentPoints = [];
+    }
   }
 
   /**
