@@ -3,7 +3,7 @@
  */
 
 const { kafka, CANVAS_OPERATIONS_TOPIC } = require('./kafka-producer');
-const { saveOperations } = require('./mongo-client');
+const { saveStrokesBatch } = require('./mongo-client');
 
 /**
  * Kafka Consumer 消费组 ID。
@@ -100,8 +100,15 @@ async function flushBuffer(reason) {
   operationBuffer = [];
 
   try {
-    // 第一阶段保持简单：消费到的 Kafka 消息直接 insertMany 写入 MongoDB。
-    await saveOperations(batch);
+    const byCanvas = {};
+    for (const op of batch) {
+      const cid = op.canvas_id || 'default';
+      if (!byCanvas[cid]) byCanvas[cid] = [];
+      byCanvas[cid].push(op);
+    }
+    for (const [cid, ops] of Object.entries(byCanvas)) {
+      await saveStrokesBatch(ops, cid);
+    }
     console.log(`[MongoDB] 批量保存完成: count=${batch.length}, reason=${reason}`);
   } catch (err) {
     // 写入失败时把数据放回缓冲区，避免短暂故障导致消息直接丢失。

@@ -279,6 +279,18 @@ async function clearCanvas(canvasId = 'default') {
 }
 
 /**
+ * 按 stroke_id 删除单条操作
+ *
+ * @param {string} strokeId 笔画 ID
+ * @returns {Promise<object>} 删除结果
+ */
+async function deleteStrokeById(strokeId) {
+  const collection = getStrokesCollection();
+  const result = await collection.deleteOne({ stroke_id: strokeId });
+  return result;
+}
+
+/**
  * 获取画布的操作数量
  *
  * @param {string} canvasId 画布 ID
@@ -329,6 +341,7 @@ module.exports = {
   getStrokesByUser,
   getLatestSequenceId,
   clearCanvas,
+  deleteStrokeById,
   getStrokesCount,
   closeMongo,
   healthCheck,

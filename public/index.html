@@ -11,12 +11,21 @@
     <section id="loginView" class="auth-view" aria-labelledby="loginTitle">
       <form id="loginForm" class="login-panel">
         <h1 id="loginTitle">SyncCanvas</h1>
-        <p>登录后选择或创建一个协作画布。</p>
+        <p id="loginDesc">登录后选择或创建一个协作画布。</p>
+        <div id="loginError" class="form-error" style="display:none;"></div>
+
         <label for="loginName">用户名</label>
         <div class="inline-form">
           <input id="loginName" name="loginName" type="text" autocomplete="name" placeholder="输入你的名字" required>
           <button class="primary-btn" type="submit">登录</button>
         </div>
+
+        <label for="loginPassword">密码</label>
+        <div class="inline-form">
+          <input id="loginPassword" name="loginPassword" type="password" autocomplete="current-password" placeholder="输入密码（6位以上）" style="display:none;">
+        </div>
+
+        <button id="loginToggle" class="text-btn" type="button">没有账号？注册</button>
       </form>
     </section>
 
@@ -35,6 +44,8 @@
           <button id="createCanvasBtn" class="primary-btn" type="button">创建新画布</button>
         </div>
 
+        <div id="canvasListLoading" class="canvas-list-loading" style="display:none;">加载中...</div>
+        <div id="canvasListError" class="canvas-list-error" style="display:none;"></div>
         <div id="canvasItems" class="canvas-items" aria-live="polite"></div>
       </div>
     </section>
@@ -59,7 +70,7 @@
 
         <button class="tool-btn" id="undoBtn" type="button" title="撤销">撤销</button>
         <button class="tool-btn" id="redoBtn" type="button" title="重做">重做</button>
-        <button class="tool-btn danger" id="clearBtn" type="button" title="清空本地画布">清空</button>
+        <button class="tool-btn danger" id="clearBtn" type="button" title="清空画布（同步清除所有用户）">清空</button>
       </div>
 
       <canvas id="canvas" aria-label="协作画布"></canvas>

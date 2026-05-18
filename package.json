@@ -1,8 +1,11 @@
 {
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "ioredis": "^5.4.2",
+    "jsonwebtoken": "^9.0.3",
     "kafkajs": "^2.2.4",
     "mongodb": "^6.12.0",
+    "uuid": "^14.0.0",
     "ws": "^8.20.1"
   }
 }

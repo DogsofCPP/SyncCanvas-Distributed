@@ -326,6 +326,46 @@
       return;
     }
 
+    // 处理服务器广播的清空画布消息
+    if (message.type === 'clear' || message.action === 'clear' || message.msg_type === 'clear') {
+      console.log(`[SyncCanvas] 收到清空画布广播 from ${message.user_id}`);
+      operations.length = 0;
+      undoneKeys.clear();
+      strokeRenderState.clear();
+      latestSequenceId = Number(message.sequence_id) || 0;
+      redrawCanvas();
+      updateSequenceStatus();
+      updateUndoRedoButtons();
+      return;
+    }
+
+    // 处理服务器广播的撤销笔画消息
+    if (message.type === 'undo' || message.action === 'undo' || message.msg_type === 'undo') {
+      const strokeId = message.stroke_id;
+      if (strokeId) {
+        console.log(`[SyncCanvas] 收到撤销笔画广播 from ${message.user_id}: ${strokeId}`);
+        // 从本地操作列表中移除该笔画
+        const index = operations.findIndex((op) => op.stroke_id === strokeId);
+        if (index >= 0) {
+          operations.splice(index, 1);
+        }
+        // 重建 undoneKeys，排除被撤销的 stroke_id
+        const newUndoneKeys = new Set();
+        undoneKeys.forEach((key) => {
+          if (!key.includes(strokeId)) {
+            newUndoneKeys.add(key);
+          }
+        });
+        undoneKeys.clear();
+        newUndoneKeys.forEach((key) => undoneKeys.add(key));
+
+        redrawCanvas();
+        updateSequenceStatus();
+        updateUndoRedoButtons();
+      }
+      return;
+    }
+
     if (Number.isFinite(message.online_count)) {
       onlineCountEl.textContent = String(message.online_count);
     }
@@ -397,7 +437,7 @@
 
     requestAnimationFrame(() => {
       resizeCanvas();
-      collector.start({ wsUrl: buildWsUrl(canvasId) });
+      collector.start({ wsUrl: buildWsUrl(canvasId), canvasId });
     });
   }
 
@@ -428,10 +468,48 @@
     collector.setWidth(width);
   });
 
-  undoBtn.addEventListener('click', undoLastOperation);
+  undoBtn.addEventListener('click', () => {
+    const visibleOperations = operations
+      .filter((operation) => !undoneKeys.has(getOperationKey(operation)))
+      .sort(compareOperations);
+    const operation = visibleOperations[visibleOperations.length - 1];
+
+    if (!operation) return;
+
+    // 发送撤销消息到服务器
+    collector.send({
+      type: 'undo',
+      canvas_id: currentCanvasId,
+      action: 'undo',
+      stroke_id: operation.stroke_id,
+    });
+
+    // 本地撤销
+    undoneKeys.add(getOperationKey(operation));
+    redrawCanvas();
+    updateUndoRedoButtons();
+  });
   redoBtn.addEventListener('click', redoLastOperation);
 
   clearBtn.addEventListener('click', () => {
+    if (operations.length === 0) {
+      return; // 画布已空，无需操作
+    }
+
+    // 确认清空
+    const confirmed = window.confirm('确定要清空画布吗？这将同步清除所有用户的笔画。');
+    if (!confirmed) {
+      return;
+    }
+
+    // 发送清空消息到服务器
+    collector.send({
+      type: 'clear',
+      canvas_id: currentCanvasId,
+      action: 'clear',
+    });
+
+    // 本地清空
     operations.length = 0;
     undoneKeys.clear();
     latestSequenceId = 0;

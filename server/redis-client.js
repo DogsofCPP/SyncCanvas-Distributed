@@ -88,7 +88,8 @@ async function publish(channel, message) {
  * 订阅频道的消息回调类型
  * @param {object} message 消息对象
  */
-let messageHandler = null;
+// 频道 -> 处理器映射（支持多画布订阅）
+const channelHandlers = new Map();
 
 /**
  * 订阅频道
@@ -97,7 +98,7 @@ let messageHandler = null;
  * @param {function} handler 消息处理函数
  */
 async function subscribe(channel, handler) {
-  messageHandler = handler;
+  channelHandlers.set(channel, handler);
   await redisSubscriber.subscribe(channel);
   console.log(`[Redis] 已订阅频道: ${channel}`);
 }
@@ -108,6 +109,7 @@ async function subscribe(channel, handler) {
  * @param {string} channel 频道名
  */
 async function unsubscribe(channel) {
+  channelHandlers.delete(channel);
   await redisSubscriber.unsubscribe(channel);
   console.log(`[Redis] 已取消订阅频道: ${channel}`);
 }
@@ -116,10 +118,11 @@ async function unsubscribe(channel) {
  * 处理订阅到的消息
  */
 redisSubscriber.on('message', (ch, message) => {
-  if (messageHandler) {
+  const handler = channelHandlers.get(ch);
+  if (handler) {
     try {
       const parsed = JSON.parse(message);
-      messageHandler(parsed);
+      handler(parsed);
     } catch (err) {
       console.error(`[Redis] 消息解析失败: ${err.message}, 原始消息: ${message}`);
     }

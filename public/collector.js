@@ -305,8 +305,11 @@ class StrokeCollector extends EventEmitter {
 
     // 工具配置
     this.currentTool = options.tool || 'pen';
-    this.currentColor = options.color || '#ffffff';
+    this.currentColor = options.color || '#000000';
     this.currentWidth = options.width || 3;
+
+    // 画布配置
+    this.canvasId = options.canvasId || null;
 
     // 笔画状态
     this.isDrawing = false;
@@ -432,6 +435,7 @@ class StrokeCollector extends EventEmitter {
    */
   _applyOptions(options) {
     if (options.wsUrl) this.wsUrl = options.wsUrl;
+    if (options.canvasId !== undefined) this.canvasId = options.canvasId;
     if (options.flushInterval) this.flushInterval = options.flushInterval;
     if (options.dpEnabled !== undefined) this.dpEnabled = options.dpEnabled;
     if (options.dpEpsilon !== undefined) this.dpEpsilon = options.dpEpsilon;
@@ -722,9 +726,9 @@ class StrokeCollector extends EventEmitter {
       return;
     }
 
-    // 只触发回调用于本地预览，不发送到服务器
     const segment = {
       action: this._getAction(),
+      canvas_id: this.canvasId,
       stroke_id: this.currentStrokeId,
       points: this.currentPoints,
       color: this.currentColor,
@@ -733,9 +737,7 @@ class StrokeCollector extends EventEmitter {
       is_preview: true
     };
 
-    // 触发回调（用于本地渲染）
     this.emit('segment', segment);
-    // 不调用 _sendSegment，避免发送到服务器
   }
 
   /**
@@ -748,13 +750,13 @@ class StrokeCollector extends EventEmitter {
     let pointsToSend = this.currentPoints;
     const originalCount = this.currentPoints.length;
 
-    // DP 压缩（只在最终片段时应用）
     if (this.dpEnabled && this.dpEpsilon > 0 && isFinal && originalCount >= 3) {
       pointsToSend = DouglasPeucker.simplify(this.currentPoints, this.dpEpsilon);
     }
 
     const segment = {
       action: this._getAction(),
+      canvas_id: this.canvasId,
       stroke_id: this.currentStrokeId,
       points: isFinal ? pointsToSend : this.currentPoints,
       color: this.currentColor,
@@ -763,20 +765,19 @@ class StrokeCollector extends EventEmitter {
       is_final: isFinal
     };
 
-    // 记录统计
     this.stats.recordSend(
       originalCount,
       pointsToSend.length,
       JSON.stringify(segment).length
     );
 
-    // 触发回调（用于本地渲染）
     this.emit('segment', segment);
 
-    // 发送（用于服务器存储）
-    this._sendSegment(segment);
+    const sentSegment = { ...segment };
+    delete sentSegment.is_preview;
+    delete sentSegment.is_final;
+    this._sendSegment(sentSegment);
 
-    // 最终片段后清空点
     if (isFinal) {
       this.currentPoints = [];
     }
@@ -929,6 +930,7 @@ class StrokeCollector extends EventEmitter {
       tool: this.currentTool,
       color: this.currentColor,
       width: this.currentWidth,
+      canvasId: this.canvasId,
       wsConnected: this.isConnected(),
       offlineMode: this.offlineMode,
       offlineCacheSize: this.offlineCache.size(),
