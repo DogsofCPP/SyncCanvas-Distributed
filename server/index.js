@@ -1,8 +1,8 @@
 /**
- * SyncCanvas WebSocket 网关 + Node.js 持久化服务。
+ * SyncCanvas WebSocket 网关服务。
  *
  * 启动方式: node server/index.js
- * 依赖: npm install ws kafkajs ioredis mongodb
+ * 依赖: npm install ws kafkajs ioredis
  */
 
 const WebSocket = require('ws');
@@ -14,18 +14,6 @@ const {
   sendCanvasOperation,
   closeKafkaProducer,
 } = require('./kafka-producer');
-const {
-  initKafkaConsumer,
-  closeKafkaConsumer,
-} = require('./kafka-consumer');
-const {
-  DEFAULT_CANVAS_ID,
-  initMongo,
-  findOperationsAfter,
-  findLatestSnapshot,
-  listCanvases,
-  closeMongo,
-} = require('./mongo-client');
 const {
   getNextSequenceId,
   publish,
@@ -43,134 +31,19 @@ const {
 // ==================== 配置 ====================
 const PORT = process.env.PORT || 3000;
 const WS_PATH = '/ws';
-const DEFAULT_HISTORY_LIMIT = 1000;
-const MAX_HISTORY_LIMIT = 5000;
 
-/**
- * 返回统一 JSON 响应。
- *
- * @param {import('http').ServerResponse} res HTTP 响应对象
- * @param {object|string|null} data 响应数据
- * @param {number} statusCode HTTP 状态码
- */
-function sendJson(res, data, statusCode = 200) {
-  res.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify({
-    code: 0,
-    message: 'ok',
-    data,
-  }));
-}
-
-/**
- * 返回错误 JSON 响应。
- *
- * @param {import('http').ServerResponse} res HTTP 响应对象
- * @param {string} message 错误消息
- * @param {number} statusCode HTTP 状态码
- */
-function sendError(res, message, statusCode = 500) {
-  res.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify({
-    code: -1,
-    message,
-    data: null,
-  }));
-}
-
-/**
- * 规范化历史查询 limit 参数。
- *
- * @param {number} limit 用户传入的 limit
- * @returns {number} 安全的 limit
- */
-function normalizeLimit(limit) {
-  if (!Number.isFinite(limit) || limit <= 0) {
-    return DEFAULT_HISTORY_LIMIT;
-  }
-
-  return Math.min(Math.floor(limit), MAX_HISTORY_LIMIT);
-}
-
-/**
- * 读取请求中的 canvas_id，没有传时使用默认画布。
- *
- * @param {URL} url 请求 URL
- * @returns {string} 画布 ID
- */
-function getCanvasIdFromUrl(url) {
-  return url.searchParams.get('canvas_id') || DEFAULT_CANVAS_ID;
-}
-
-/**
- * 处理历史操作查询接口。
- *
- * @param {URL} url 请求 URL
- * @param {import('http').ServerResponse} res HTTP 响应对象
- */
-async function handleOperationsApi(url, res) {
-  const canvasId = getCanvasIdFromUrl(url);
-  const from = Number(url.searchParams.get('from') || 0);
-  const limit = normalizeLimit(Number(url.searchParams.get('limit') || DEFAULT_HISTORY_LIMIT));
-  const safeFrom = Number.isFinite(from) && from >= 0 ? Math.floor(from) : 0;
-
-  // 按 SCHEMA.md 要求，operations 查询必须按 canvas_id 隔离。
-  const operations = await findOperationsAfter(canvasId, safeFrom, limit);
-
-  sendJson(res, {
-    canvas_id: canvasId,
-    from: safeFrom,
-    limit,
-    count: operations.length,
-    operations,
-  });
-}
-
-/**
- * 处理最新快照查询接口。
- *
- * @param {URL} url 请求 URL
- * @param {import('http').ServerResponse} res HTTP 响应对象
- */
-async function handleLatestSnapshotApi(url, res) {
-  const canvasId = getCanvasIdFromUrl(url);
-  const snapshot = await findLatestSnapshot(canvasId);
-  sendJson(res, snapshot);
-}
-
-/**
- * 处理画布列表查询接口。
- *
- * @param {URL} url 请求 URL
- * @param {import('http').ServerResponse} res HTTP 响应对象
- */
-async function handleCanvasesApi(url, res) {
-  const limit = normalizeLimit(Number(url.searchParams.get('limit') || 100));
-  const canvases = await listCanvases(limit);
-  sendJson(res, {
-    limit,
-    count: canvases.length,
-    canvases,
-  });
-}
-
-/**
- * 处理静态文件请求。
- *
- * @param {import('http').IncomingMessage} req HTTP 请求对象
- * @param {import('http').ServerResponse} res HTTP 响应对象
- */
-function handleStaticFile(req, res) {
+// ==================== HTTP 服务（静态文件） ====================
+const httpServer = http.createServer((req, res) => {
   // 简单静态文件服务，默认返回 public/index.html。
   let filePath = req.url === '/' ? '/index.html' : req.url;
   filePath = path.join(__dirname, '..', 'public', filePath);
 
   const ext = path.extname(filePath);
   const mimeTypes = {
-    '.html': 'text/html; charset=utf-8',
-    '.js': 'application/javascript; charset=utf-8',
-    '.css': 'text/css; charset=utf-8',
-    '.json': 'application/json; charset=utf-8',
+    '.html': 'text/html',
+    '.js': 'application/javascript',
+    '.css': 'text/css',
+    '.json': 'application/json',
     '.png': 'image/png',
     '.svg': 'image/svg+xml',
   };
@@ -181,42 +54,9 @@ function handleStaticFile(req, res) {
       res.end('Not Found');
       return;
     }
-
-    res.writeHead(200, { 'Content-Type': mimeTypes[ext] || 'text/plain; charset=utf-8' });
+    res.writeHead(200, { 'Content-Type': mimeTypes[ext] || 'text/plain' });
     res.end(content);
   });
-}
-
-// ==================== HTTP 服务（API + 静态文件） ====================
-const httpServer = http.createServer(async (req, res) => {
-  try {
-    const url = new URL(req.url, `http://${req.headers.host}`);
-
-    if (req.method === 'GET' && url.pathname === '/api/v1/health') {
-      sendJson(res, 'server persistence is running');
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/api/v1/operations') {
-      await handleOperationsApi(url, res);
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/api/v1/snapshots/latest') {
-      await handleLatestSnapshotApi(url, res);
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/api/v1/canvases') {
-      await handleCanvasesApi(url, res);
-      return;
-    }
-
-    handleStaticFile(req, res);
-  } catch (err) {
-    console.error(`[HTTP] 请求处理失败: ${err.message}`);
-    sendError(res, err.message);
-  }
 });
 
 // ==================== WebSocket 服务 ====================
@@ -264,17 +104,16 @@ function generateStrokeId() {
 }
 
 /**
- * 生成单调递增的 sequence_id，当前使用 Redis INCR，并按 canvas_id 隔离。
+ * 生成单调递增的 sequence_id（使用 Redis INCR）。
  *
- * @param {string} canvasId 画布 ID
  * @returns {Promise<number>} 操作序列号
  */
-async function generateSequenceId(canvasId) {
-  return await getNextSequenceId(canvasId);
+async function generateSequenceId() {
+  return await getNextSequenceId();
 }
 
 /**
- * 根据客户端消息组装完整 Canvas 操作对象。
+ * 根据客户端消息组装完整 Canvas 操作对象（使用 Redis INCR 生成 sequence_id）。
  *
  * @param {object} message 客户端传入的绘画消息
  * @param {string} userId 当前 WebSocket 用户 ID
@@ -283,16 +122,12 @@ async function generateSequenceId(canvasId) {
 async function buildCanvasOperation(message, userId) {
   // 兼容前端 action 字段：客户端传 action 时映射为 msg_type。
   const msgType = message.msg_type || message.action || 'draw';
-  const canvasId = message.canvas_id || DEFAULT_CANVAS_ID;
 
   return {
-    canvas_id: canvasId,
     msg_type: msgType,
-    action: message.action || msgType,
-    sequence_id: await generateSequenceId(canvasId),
+    sequence_id: await generateSequenceId(),
     user_id: message.user_id || userId,
     stroke_id: message.stroke_id || generateStrokeId(),
-    segment_index: Number.isInteger(message.segment_index) ? message.segment_index : 0,
     points: Array.isArray(message.points) ? message.points : [],
     color: message.color || '#000000',
     width: message.width || 3,
@@ -310,7 +145,6 @@ async function handleClientMessage(userId, data) {
   const message = JSON.parse(data.toString());
   console.log(`[收到消息] userId=${userId}, stroke_id=${message.stroke_id}, points=${message.points?.length || 0}`);
 
-<<<<<<< HEAD
   const operation = await buildCanvasOperation(message, userId);
 
   // 广播给其他客户端
@@ -322,19 +156,6 @@ async function handleClientMessage(userId, data) {
   // 存储到 MongoDB
   await saveStroke(operation);
   console.log(`[完成] stroke_id=${operation.stroke_id}, 点数=${operation.points.length}`);
-=======
-  // 组装持久化和广播需要的完整操作对象。
-  const operation = await buildCanvasOperation(message, userId);
-  console.log(`[序列号] canvas_id=${operation.canvas_id}, sequence_id=${operation.sequence_id}`);
-
-  // 通过 Redis Pub/Sub 广播给 WebSocket 客户端。
-  await publish(CHANNEL_CANVAS_OPERATIONS, operation);
-  console.log(`[Redis] 已广播画布操作: canvas_id=${operation.canvas_id}, sequence_id=${operation.sequence_id}`);
-
-  // 将绘画操作发送到 Kafka，由本进程内的 Kafka Consumer 消费并写入 MongoDB。
-  await sendCanvasOperation(operation);
-  console.log(`[Kafka] 已发送画布操作: canvas_id=${operation.canvas_id}, sequence_id=${operation.sequence_id}`);
->>>>>>> a66d64461534e09cb4b99881e507207735be6354
 }
 
 // 处理 WebSocket 连接。
@@ -395,20 +216,17 @@ wss.on('connection', async (ws) => {
  * @param {object} operation 画布操作对象
  */
 function broadcastToClients(operation) {
-  const message = JSON.stringify({
-    type: 'broadcast',
-    ...operation,
-  });
+  const message = JSON.stringify(operation);
   let sentCount = 0;
 
-  clients.forEach((clientWs) => {
+  clients.forEach((clientWs, clientId) => {
     if (clientWs.readyState === WebSocket.OPEN) {
       clientWs.send(message);
       sentCount++;
     }
   });
 
-  console.log(`[广播] 已发送给 ${sentCount} 个客户端: canvas_id=${operation.canvas_id}, sequence_id=${operation.sequence_id}`);
+  console.log(`[广播] 已发送给 ${sentCount} 个客户端: sequence_id=${operation.sequence_id}`);
 }
 
 /**
@@ -423,50 +241,37 @@ async function startRedisSubscription(channel) {
 }
 
 /**
- * 启动 HTTP、WebSocket、Kafka、Redis 和 MongoDB。
+ * 启动 HTTP 和 WebSocket 服务。
  */
 async function startServer() {
-<<<<<<< HEAD
   await connectMongo();
-=======
-  // 服务启动时初始化所有基础组件。
-  await initMongo();
->>>>>>> a66d64461534e09cb4b99881e507207735be6354
   await initKafkaProducer();
-  await initKafkaConsumer();
   await startRedisSubscription(CHANNEL_CANVAS_OPERATIONS);
 
   httpServer.listen(PORT, () => {
     console.log('===========================================');
-    console.log(' SyncCanvas Node.js 网关 + 持久化服务');
+    console.log(' SyncCanvas WebSocket 网关服务');
     console.log(` 端口: http://localhost:${PORT}`);
     console.log(` WebSocket: ws://localhost:${PORT}${WS_PATH}`);
-    console.log(' HTTP API: /api/v1/operations, /api/v1/snapshots/latest, /api/v1/canvases, /api/v1/health');
-    console.log(' Redis: localhost:6379');
+    console.log(` Redis: localhost:6379`);
+    console.log(' Redis Channel:', CHANNEL_CANVAS_OPERATIONS);
     console.log(' Kafka Topic: canvas-operations');
-    console.log(' MongoDB: mongodb://localhost:27017/sync_canvas');
     console.log('===========================================');
     console.log('等待连接...');
     console.log('');
     console.log('提示: 打开浏览器访问 http://localhost:' + PORT);
-    console.log('提示: 运行前先启动 docker-compose up -d');
+    console.log('提示: 运行前先启动 docker-compose up');
     console.log('');
   });
 }
 
 /**
- * 优雅关闭服务和外部连接。
+ * 优雅关闭服务和 Redis 连接。
  *
  * @param {string} signal 退出信号
  */
 async function gracefulShutdown(signal) {
   console.log(`[进程退出] 收到 ${signal}，正在关闭服务...`);
-
-  try {
-    await closeKafkaConsumer();
-  } catch (err) {
-    console.error(`[!] Kafka Consumer 关闭失败: ${err.message}`);
-  }
 
   try {
     await closeKafkaProducer();
@@ -489,7 +294,7 @@ async function gracefulShutdown(signal) {
   }
 }
 
-// 监听进程退出信号，确保 Kafka、Redis、MongoDB 可以优雅断开。
+// 监听进程退出信号，确保 Kafka Producer 可以优雅断开。
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 

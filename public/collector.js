@@ -308,9 +308,6 @@ class StrokeCollector extends EventEmitter {
     this.currentColor = options.color || '#ffffff';
     this.currentWidth = options.width || 3;
 
-    // 画布 ID（协议要求）
-    this.canvasId = options.canvasId || null;
-
     // 笔画状态
     this.isDrawing = false;
     this.currentStrokeId = null;
@@ -435,7 +432,6 @@ class StrokeCollector extends EventEmitter {
    */
   _applyOptions(options) {
     if (options.wsUrl) this.wsUrl = options.wsUrl;
-    if (options.canvasId) this.canvasId = options.canvasId;
     if (options.flushInterval) this.flushInterval = options.flushInterval;
     if (options.dpEnabled !== undefined) this.dpEnabled = options.dpEnabled;
     if (options.dpEpsilon !== undefined) this.dpEpsilon = options.dpEpsilon;
@@ -470,22 +466,6 @@ class StrokeCollector extends EventEmitter {
     this.currentTool = tool;
     console.log('[Collector] 工具切换:', oldTool, '->', tool);
     this.emit('toolChange', { oldTool, newTool: tool });
-    return true;
-  }
-
-  /**
-   * 设置画布 ID（协议要求）
-   * @param {string} canvasId 画布 ID
-   */
-  setCanvasId(canvasId) {
-    if (!canvasId) {
-      console.warn('[Collector] canvas_id 不能为空');
-      return false;
-    }
-    const oldId = this.canvasId;
-    this.canvasId = canvasId;
-    console.log('[Collector] 画布切换:', oldId || '(无)', '->', canvasId);
-    this.emit('canvasIdChange', { oldCanvasId: oldId, newCanvasId: canvasId });
     return true;
   }
 
@@ -765,12 +745,6 @@ class StrokeCollector extends EventEmitter {
   emitSegment(isFinal = false) {
     if (this.currentPoints.length === 0) return;
 
-    // 协议要求：必须携带 canvas_id
-    if (!this.canvasId) {
-      console.warn('[Collector] canvas_id 未设置，无法发送片段');
-      return;
-    }
-
     let pointsToSend = this.currentPoints;
     const originalCount = this.currentPoints.length;
 
@@ -781,7 +755,6 @@ class StrokeCollector extends EventEmitter {
 
     const segment = {
       action: this._getAction(),
-      canvas_id: this.canvasId,  // 协议要求：携带 canvas_id
       stroke_id: this.currentStrokeId,
       points: isFinal ? pointsToSend : this.currentPoints,
       color: this.currentColor,
@@ -953,7 +926,6 @@ class StrokeCollector extends EventEmitter {
       isDrawing: this.isDrawing,
       strokeId: this.currentStrokeId,
       pointsCount: this.currentPoints.length,
-      canvasId: this.canvasId,
       tool: this.currentTool,
       color: this.currentColor,
       width: this.currentWidth,
@@ -1010,19 +982,15 @@ if (typeof module !== 'undefined' && module.exports) {
 // ==================== 控制台帮助 ====================
 console.log(`
 ╔════════════════════════════════════════════════════════════╗
-║              SyncCanvas Collector v2.1                      ║
+║              SyncCanvas Collector v2.0                      ║
 ╠════════════════════════════════════════════════════════════╣
-║  启动: collector.start({                                   ║
-║    wsUrl: 'ws://localhost:3000',                          ║
-║    canvasId: 'canvas-001'                                  ║
-║  })                                                        ║
+║  启动: collector.start({ wsUrl: 'ws://localhost:3000' })    ║
 ║  停止: collector.stop()                                    ║
 ╠════════════════════════════════════════════════════════════╣
 ║  工具设置:                                                 ║
 ║    collector.setTool('pen'|'eraser'|'highlighter')        ║
 ║    collector.setColor('#ffffff')                          ║
 ║    collector.setWidth(3)                                  ║
-║    collector.setCanvasId('canvas-001')  // 设置画布       ║
 ╠════════════════════════════════════════════════════════════╣
 ║  压缩设置:                                                 ║
 ║    collector.setDpEpsilon(1.0)  // DP 容差                 ║
@@ -1036,7 +1004,8 @@ console.log(`
 ╠════════════════════════════════════════════════════════════╣
 ║  事件监听:                                                 ║
 ║    collector.on('segment', (seg) => {})                    ║
-║    collector.on('canvasIdChange', ({old, new}) => {})      ║
+║    collector.on('strokeStart', ({strokeId, point}) => {})  ║
+║    collector.on('strokeEnd', ({strokeId, points}) => {})   ║
 ║    collector.on('connect', () => {})                       ║
 ║    collector.on('disconnect', () => {})                    ║
 ╚════════════════════════════════════════════════════════════╝
