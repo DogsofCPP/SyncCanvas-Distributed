@@ -8,40 +8,76 @@
 </head>
 <body>
   <main class="app-shell">
-    <div id="toolbar" aria-label="画布工具栏">
-      <button class="tool-btn active" id="penBtn" type="button" title="画笔">画笔</button>
-      <button class="tool-btn" id="eraserBtn" type="button" title="橡皮擦">橡皮</button>
+    <section id="loginView" class="auth-view" aria-labelledby="loginTitle">
+      <form id="loginForm" class="login-panel">
+        <h1 id="loginTitle">SyncCanvas</h1>
+        <p>登录后选择或创建一个协作画布。</p>
+        <label for="loginName">用户名</label>
+        <div class="inline-form">
+          <input id="loginName" name="loginName" type="text" autocomplete="name" placeholder="输入你的名字" required>
+          <button class="primary-btn" type="submit">登录</button>
+        </div>
+      </form>
+    </section>
 
-      <label class="color-control" title="颜色">
-        <span>颜色</span>
-        <input type="color" id="colorPicker" value="#000000" aria-label="颜色选择器">
-      </label>
+    <section id="canvasListView" class="canvas-list-view is-hidden" aria-labelledby="canvasListTitle">
+      <div class="canvas-list-panel">
+        <div class="panel-heading">
+          <div>
+            <h1 id="canvasListTitle">画布列表</h1>
+            <p>欢迎，<span id="currentUserName">-</span></p>
+          </div>
+          <button id="logoutBtn" class="ghost-btn" type="button">退出</button>
+        </div>
 
-      <label class="width-control" title="线条粗细">
-        <span>粗细</span>
-        <input type="range" id="strokeWidth" min="1" max="50" value="3" aria-label="线条粗细">
-        <output id="widthValue" for="strokeWidth">3</output>
-      </label>
+        <div class="create-canvas">
+          <input id="newCanvasName" type="text" placeholder="新画布名称">
+          <button id="createCanvasBtn" class="primary-btn" type="button">创建新画布</button>
+        </div>
 
-      <button class="tool-btn" id="undoBtn" type="button" title="撤销">撤销</button>
-      <button class="tool-btn" id="redoBtn" type="button" title="重做">重做</button>
-      <button class="tool-btn danger" id="clearBtn" type="button" title="清空本地画布">清空</button>
-    </div>
+        <div id="canvasItems" class="canvas-items" aria-live="polite"></div>
+      </div>
+    </section>
 
-    <canvas id="canvas" aria-label="协作画布"></canvas>
+    <section id="drawView" class="draw-view is-hidden" aria-label="协作画布">
+      <div id="toolbar" aria-label="画布工具栏">
+        <button class="tool-btn" id="backToListBtn" type="button" title="返回画布列表">返回</button>
+        <span id="currentCanvasLabel" class="canvas-label">未选择画布</span>
+        <button class="tool-btn active" id="penBtn" type="button" title="画笔">画笔</button>
+        <button class="tool-btn" id="eraserBtn" type="button" title="橡皮擦">橡皮擦</button>
 
-    <div id="status" aria-live="polite">
-      状态: <span id="wsStatus" class="disconnected">未连接</span>
-      <span class="divider">|</span>
-      用户: <span id="userId">-</span>
-      <span class="divider">|</span>
-      在线: <span id="onlineCount">0</span>
-      <span class="divider">|</span>
-      序列: <span id="sequenceId">0</span>
-    </div>
+        <label class="color-control" title="颜色">
+          <span>颜色</span>
+          <input type="color" id="colorPicker" value="#000000" aria-label="颜色选择器">
+        </label>
+
+        <label class="width-control" title="线条粗细">
+          <span>粗细</span>
+          <input type="range" id="strokeWidth" min="1" max="50" value="3" aria-label="线条粗细">
+          <output id="widthValue" for="strokeWidth">3</output>
+        </label>
+
+        <button class="tool-btn" id="undoBtn" type="button" title="撤销">撤销</button>
+        <button class="tool-btn" id="redoBtn" type="button" title="重做">重做</button>
+        <button class="tool-btn danger" id="clearBtn" type="button" title="清空本地画布">清空</button>
+      </div>
+
+      <canvas id="canvas" aria-label="协作画布"></canvas>
+
+      <div id="status" aria-live="polite">
+        状态: <span id="wsStatus" class="disconnected">未连接</span>
+        <span class="divider">|</span>
+        用户: <span id="userId">-</span>
+        <span class="divider">|</span>
+        在线: <span id="onlineCount">0</span>
+        <span class="divider">|</span>
+        序列: <span id="sequenceId">0</span>
+      </div>
+    </section>
   </main>
 
   <script src="collector.js"></script>
   <script src="draw.js"></script>
+  <script src="canvas-list.js"></script>
 </body>
 </html>

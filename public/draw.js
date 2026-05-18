@@ -1,84 +1,76 @@
-/**
- * 这是一个画布应用的主函数，使用IIFE（立即调用函数表达式）封装，避免全局变量污染
- */
 (function () {
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const penBtn = document.getElementById('penBtn');
+  const eraserBtn = document.getElementById('eraserBtn');
+  const colorPicker = document.getElementById('colorPicker');
+  const strokeWidth = document.getElementById('strokeWidth');
+  const widthValue = document.getElementById('widthValue');
+  const undoBtn = document.getElementById('undoBtn');
+  const redoBtn = document.getElementById('redoBtn');
+  const clearBtn = document.getElementById('clearBtn');
+  const wsStatus = document.getElementById('wsStatus');
+  const userIdEl = document.getElementById('userId');
+  const onlineCountEl = document.getElementById('onlineCount');
+  const sequenceIdEl = document.getElementById('sequenceId');
+  const currentCanvasLabel = document.getElementById('currentCanvasLabel');
 
-  // 获取DOM元素
-  const canvas = document.getElementById('canvas'); // 画布元素
-  const ctx = canvas.getContext('2d'); // 画布2D上下文
-  const penBtn = document.getElementById('penBtn'); // 画笔按钮
-  const eraserBtn = document.getElementById('eraserBtn'); // 橡皮擦按钮
-  const colorPicker = document.getElementById('colorPicker'); // 颜色选择器
-  const strokeWidth = document.getElementById('strokeWidth'); // 笔画宽度滑块
-  const widthValue = document.getElementById('widthValue'); // 宽度显示值
-  const undoBtn = document.getElementById('undoBtn'); // 撤销按钮
-  const redoBtn = document.getElementById('redoBtn'); // 重做按钮
-  const clearBtn = document.getElementById('clearBtn'); // 清空按钮
-  const wsStatus = document.getElementById('wsStatus'); // WebSocket状态显示
-  const userIdEl = document.getElementById('userId'); // 用户ID显示
-  const onlineCountEl = document.getElementById('onlineCount'); // 在线人数显示
-  const sequenceIdEl = document.getElementById('sequenceId'); // 序列ID显示
+  const backgroundColor = '#ffffff';
+  const wsBaseUrl = 'ws://localhost:3000/ws';
+  const operations = [];
+  const undoneKeys = new Set();
+  const strokeRenderState = new Map();
 
+  let currentUserId = null;
+  let currentCanvasId = null;
+  let currentCanvasName = '';
+  let latestSequenceId = 0;
+  let localSequenceId = Date.now();
+  let isDrawing = false;
+  let lastPoint = null;
+  let collectorStarted = false;
 
+  function buildWsUrl(canvasId) {
+    return `${wsBaseUrl}?canvas_id=${encodeURIComponent(canvasId)}`;
+  }
 
-  // 常量定义
-  const backgroundColor = '#ffffff'; // 背景色
-  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsHost = window.location.host;
-  const wsUrl = `${wsProtocol}//${wsHost}/ws`; // 使用当前页面的协议和主机
-
-
-  // 操作历史和状态管理
-  const operations = []; // 存储所有操作记录
-  const undoneKeys = new Set(); // 存储已撤销操作的键
-  const strokeRenderState = new Map(); // 存储笔画渲染状态
-
-
-
-  // 变量声明
-  let currentUserId = null; // 当前用户ID
-  let latestSequenceId = 0; // 最新序列ID
-  let localSequenceId = Date.now(); // 本地序列ID
-  let isDrawing = false; // 是否正在绘制的标志
-  let lastPoint = null; // 上一个点的坐标
-
-  /**
-   * 调整画布大小以适应窗口
-   */
   function resizeCanvas() {
-    canvas.width = window.innerWidth; // 设置画布宽度为窗口宽度
-    canvas.height = window.innerHeight; // 设置画布高度为窗口高度
-    redrawCanvas(); // 重绘画布内容
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    redrawCanvas();
   }
 
-  /**
-   * 清空画布
-   */
   function clearCanvas() {
-    ctx.setTransform(1, 0, 0, 1, 0, 0); // 重置变换矩阵
-    ctx.fillStyle = backgroundColor; // 设置填充色为背景色
-    ctx.fillRect(0, 0, canvas.width, canvas.height); // 填充整个画布
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = backgroundColor;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
 
-  /**
-   * 获取鼠标在画布上的坐标
-   * @param {Object} event - 鼠标事件对象
-   * @returns {Object} 包含x和y坐标的对象
-   */
+  function resetCanvasState() {
+    operations.length = 0;
+    undoneKeys.clear();
+    strokeRenderState.clear();
+    latestSequenceId = 0;
+    localSequenceId = Date.now();
+    isDrawing = false;
+    lastPoint = null;
+    onlineCountEl.textContent = '0';
+    userIdEl.textContent = currentUserId || '-';
+    updateSequenceStatus();
+    updateUndoRedoButtons();
+    clearCanvas();
+  }
+
   function getCanvasPoint(event) {
-    const rect = canvas.getBoundingClientRect(); // 获取画布的位置信息
+    const rect = canvas.getBoundingClientRect();
     return {
-      x: event.clientX - rect.left, // 计算相对于画布的x坐标
-      y: event.clientY - rect.top  // 计算相对于画布的y坐标
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top
     };
   }
 
-  /**
-   * 获取当前激活的工具
-   * @returns {string} 当前工具名称
-   */
   function getActiveTool() {
-    return collector.getStatus().tool; // 从collector获取当前工具状态
+    return collector.getStatus().tool;
   }
 
   function getDrawStyle(action, color, width) {
@@ -148,9 +140,7 @@
     for (let index = 1; index < points.length - 1; index += 1) {
       const current = points[index];
       const next = points[index + 1];
-      const midX = (current.x + next.x) / 2;
-      const midY = (current.y + next.y) / 2;
-      ctx.quadraticCurveTo(current.x, current.y, midX, midY);
+      ctx.quadraticCurveTo(current.x, current.y, (current.x + next.x) / 2, (current.y + next.y) / 2);
     }
 
     const last = points[points.length - 1];
@@ -167,6 +157,7 @@
 
     return {
       action: action === 'erase' ? 'erase' : 'stroke',
+      canvas_id: message.canvas_id || currentCanvasId,
       stroke_id: message.stroke_id || crypto.randomUUID(),
       points,
       color: message.color || '#000000',
@@ -242,13 +233,12 @@
   }
 
   function handleLocalSegment(segment) {
-    // 预览片段：collector 已通过 canvas 事件绘制，无需再次绘制
-    // 这里只负责发送到服务器（collector._sendSegment 已处理）
+    segment.canvas_id = currentCanvasId;
+
     if (segment.is_preview) {
       return;
     }
 
-    // 最终片段：添加到历史记录
     localSequenceId = Math.max(localSequenceId + 1, latestSequenceId + 1, Date.now());
     const localKey = `${segment.stroke_id}:${segment.timestamp}:${localSequenceId}`;
     const operation = normalizeOperation(segment, {
@@ -262,11 +252,14 @@
   }
 
   function handleRemoteOperation(message) {
-    // 预览片段：只用于实时预览，不添加到历史记录
+    if (message.canvas_id && currentCanvasId && message.canvas_id !== currentCanvasId) {
+      return;
+    }
+
     if (message.is_preview) {
       const operation = normalizeOperation(message);
-      const style = getDrawStyle(operation.action, operation.color, operation.width);
       const lastTwoPoints = operation.points.slice(-2);
+
       if (lastTwoPoints.length === 2) {
         drawLine(lastTwoPoints[0], lastTwoPoints[1]);
       } else if (lastTwoPoints.length === 1) {
@@ -275,7 +268,6 @@
       return;
     }
 
-    // 最终片段：添加到历史记录
     const operation = normalizeOperation(message);
 
     if (operation.user_id === currentUserId) {
@@ -310,42 +302,27 @@
       return;
     }
 
-    // 处理历史同步响应
     if (message.type === 'sync_response') {
-      console.log(`[SyncCanvas] 收到历史同步: ${message.operations ? message.operations.length : 0} 条操作`);
+      operations.length = 0;
+      undoneKeys.clear();
+      strokeRenderState.clear();
 
-      if (message.operations && Array.isArray(message.operations)) {
-        // 清空当前操作列表
-        operations.length = 0;
-        undoneKeys.clear();
-        strokeRenderState.clear();
-
-        // 批量添加历史操作
-        message.operations.forEach((op) => {
-          if (op.points && op.points.length > 0) {
-            const operation = normalizeOperation(op);
+      if (Array.isArray(message.operations)) {
+        message.operations.forEach((item) => {
+          const operation = normalizeOperation(item);
+          if (operation.points.length > 0) {
             operations.push(operation);
           }
         });
-
-        // 按 sequence_id 排序
-        operations.sort(compareOperations);
-
-        // 更新 latestSequenceId
-        if (message.operations.length > 0) {
-          const maxSeq = message.operations.reduce((max, op) => {
-            return Math.max(max, Number(op.sequence_id) || 0);
-          }, 0);
-          latestSequenceId = maxSeq;
-        }
-
-        // 重绘画布
-        redrawCanvas();
-        updateSequenceStatus();
-        updateUndoRedoButtons();
-
-        console.log(`[SyncCanvas] 已渲染 ${operations.length} 条历史操作`);
       }
+
+      operations.sort(compareOperations);
+      latestSequenceId = operations.reduce((max, operation) => (
+        Math.max(max, Number(operation.sequence_id) || 0)
+      ), 0);
+      redrawCanvas();
+      updateSequenceStatus();
+      updateUndoRedoButtons();
       return;
     }
 
@@ -401,6 +378,43 @@
     updateUndoRedoButtons();
   }
 
+  function openCanvas(canvasId, canvasName) {
+    if (!canvasId) return;
+
+    currentCanvasId = canvasId;
+    currentCanvasName = canvasName || canvasId;
+    currentCanvasLabel.textContent = currentCanvasName;
+
+    if (collectorStarted) {
+      collector.stop();
+    } else {
+      collectorStarted = true;
+    }
+
+    resetCanvasState();
+    wsStatus.textContent = '连接中';
+    wsStatus.className = 'disconnected';
+
+    requestAnimationFrame(() => {
+      resizeCanvas();
+      collector.start({ wsUrl: buildWsUrl(canvasId) });
+    });
+  }
+
+  function disconnectCanvas() {
+    if (collectorStarted) {
+      collector.stop();
+      collectorStarted = false;
+    }
+
+    currentCanvasId = null;
+    currentCanvasName = '';
+    currentCanvasLabel.textContent = '未选择画布';
+    resetCanvasState();
+    wsStatus.textContent = '未连接';
+    wsStatus.className = 'disconnected';
+  }
+
   penBtn.addEventListener('click', () => setActiveTool('pen'));
   eraserBtn.addEventListener('click', () => setActiveTool('eraser'));
 
@@ -427,6 +441,7 @@
   });
 
   canvas.addEventListener('mousedown', (event) => {
+    if (!currentCanvasId) return;
     isDrawing = true;
     lastPoint = getCanvasPoint(event);
     drawDot(lastPoint);
@@ -473,5 +488,11 @@
   collector.setWidth(Number(strokeWidth.value));
   updateSequenceStatus();
   updateUndoRedoButtons();
-  collector.start({ wsUrl });
+
+  window.SyncCanvasDraw = {
+    openCanvas,
+    disconnectCanvas,
+    getCurrentCanvasId: () => currentCanvasId,
+    getCurrentCanvasName: () => currentCanvasName
+  };
 }());

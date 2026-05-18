@@ -12,14 +12,184 @@ body {
 body {
   font-family: Arial, "Microsoft YaHei", sans-serif;
   color: #1f2937;
-  background: #f7f8fb;
+  background: #f4f7fb;
   overflow: hidden;
 }
 
-.app-shell {
+button,
+input {
+  font: inherit;
+}
+
+.app-shell,
+.draw-view {
   position: relative;
   width: 100vw;
   height: 100vh;
+}
+
+.is-hidden {
+  display: none !important;
+}
+
+.auth-view,
+.canvas-list-view {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+  background:
+    linear-gradient(135deg, rgba(37, 99, 235, 0.12), rgba(20, 184, 166, 0.12)),
+    #f4f7fb;
+}
+
+.login-panel,
+.canvas-list-panel {
+  width: min(720px, 100%);
+  padding: 28px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  box-shadow: 0 18px 48px rgba(31, 41, 55, 0.16);
+}
+
+.login-panel {
+  width: min(520px, 100%);
+}
+
+.login-panel h1,
+.canvas-list-panel h1 {
+  margin: 0 0 8px;
+  font-size: 28px;
+  line-height: 1.2;
+}
+
+.login-panel p,
+.canvas-list-panel p {
+  margin: 0 0 22px;
+  color: #64748b;
+}
+
+.login-panel label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 700;
+}
+
+.inline-form,
+.create-canvas {
+  display: flex;
+  gap: 10px;
+}
+
+.inline-form input,
+.create-canvas input {
+  min-width: 0;
+  flex: 1;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1f2937;
+}
+
+.inline-form input:focus,
+.create-canvas input:focus {
+  border-color: #2563eb;
+  outline: 3px solid rgba(37, 99, 235, 0.14);
+}
+
+.primary-btn,
+.ghost-btn {
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.primary-btn {
+  color: #ffffff;
+  background: #2563eb;
+  border: 1px solid #2563eb;
+}
+
+.primary-btn:hover {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+}
+
+.ghost-btn {
+  color: #334155;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+}
+
+.ghost-btn:hover {
+  border-color: #2563eb;
+  color: #2563eb;
+}
+
+.panel-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.panel-heading p {
+  margin-bottom: 0;
+}
+
+.create-canvas {
+  margin-bottom: 18px;
+}
+
+.canvas-items {
+  display: grid;
+  gap: 10px;
+}
+
+.canvas-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 14px;
+  text-align: left;
+  color: #1f2937;
+  background: #ffffff;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.canvas-item:hover {
+  border-color: #2563eb;
+  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.12);
+}
+
+.canvas-item strong,
+.canvas-item span {
+  display: block;
+}
+
+.canvas-item strong {
+  margin-bottom: 4px;
+}
+
+.canvas-item span {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.canvas-item .canvas-arrow {
+  color: #2563eb;
+  font-weight: 700;
 }
 
 #canvas {
@@ -45,6 +215,16 @@ body {
   border: 1px solid #d8dee8;
   border-radius: 8px;
   box-shadow: 0 10px 30px rgba(31, 41, 55, 0.14);
+}
+
+.canvas-label {
+  max-width: 180px;
+  overflow: hidden;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tool-btn {
@@ -153,6 +333,12 @@ body {
 }
 
 @media (max-width: 760px) {
+  .inline-form,
+  .create-canvas,
+  .panel-heading {
+    flex-direction: column;
+  }
+
   #toolbar {
     right: 12px;
     left: 12px;
