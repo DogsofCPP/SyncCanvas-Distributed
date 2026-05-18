@@ -1,0 +1,8 @@
+﻿name,strokeType,pointCount,epsilon,originalCount,simplifiedCount,reduction,originalBytes,simplifiedBytes,byteReduction,timeMs
+直线,straight,100,2,100,2,98.0%,4880,74,98.5%,0.003
+对角线,diagonal,100,2,100,2,98.0%,6273,74,98.8%,0.004
+圆弧,circle,100,2,100,36,64.0%,6402,2278,64.4%,0.024
+锯齿,zigzag,100,2,100,65,35.0%,6312,4082,35.3%,0.031
+随机游走,random,100,2,100,96,4.0%,6461,6205,4.0%,0.040
+螺旋线,spiral,100,2,100,99,1.0%,6409,6345,1.0%,0.060
+随机抖动,squiggle,100,2,100,73,27.0%,6424,4695,26.9%,0.056

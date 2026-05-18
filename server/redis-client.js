@@ -67,8 +67,9 @@ redisSubscriber.on('error', (err) => {
  *
  * @returns {Promise<number>} 序列号
  */
-async function getNextSequenceId() {
-  const sequenceId = await redisClient.incr('canvas:sequence_id');
+async function getNextSequenceId(canvasId = 'canvas-001') {
+  // v2.0 要求 sequence_id 按 canvas_id 隔离，因此 Redis key 使用 seq:<canvas_id>。
+  const sequenceId = await redisClient.incr(`seq:${canvasId}`);
   return sequenceId;
 }
 
@@ -91,14 +92,32 @@ async function publish(channel, message) {
 let messageHandler = null;
 
 /**
- * 订阅频道
+ * 标记：subscriber 是否已完全就绪（subscribe 命令已发送 + 连接已建立）。
+ */
+let subscriberReady = false;
+
+/**
+ * 订阅频道。
  *
  * @param {string} channel 频道名
  * @param {function} handler 消息处理函数
  */
 async function subscribe(channel, handler) {
   messageHandler = handler;
+
+  // 等待 subscriber 连接就绪，再发 SUBSCRIBE 命令。
+  // ioredis 的 subscribe() 会在连接就绪后立即发出命令，
+  // 但由于 server/index.js 没有 await，这里需要显式等待 ready。
+  await new Promise((resolve) => {
+    if (redisSubscriber.status === 'ready') {
+      resolve();
+    } else {
+      redisSubscriber.once('ready', resolve);
+    }
+  });
+
   await redisSubscriber.subscribe(channel);
+  subscriberReady = true;
   console.log(`[Redis] 已订阅频道: ${channel}`);
 }
 
@@ -113,16 +132,17 @@ async function unsubscribe(channel) {
 }
 
 /**
- * 处理订阅到的消息
+ * 处理订阅到的消息。
  */
 redisSubscriber.on('message', (ch, message) => {
-  if (messageHandler) {
-    try {
-      const parsed = JSON.parse(message);
-      messageHandler(parsed);
-    } catch (err) {
-      console.error(`[Redis] 消息解析失败: ${err.message}, 原始消息: ${message}`);
-    }
+  if (!subscriberReady || !messageHandler) {
+    return;
+  }
+  try {
+    const parsed = JSON.parse(message);
+    messageHandler(parsed);
+  } catch (err) {
+    console.error(`[Redis] 消息解析失败: ${err.message}, 原始消息: ${message}`);
   }
 });
 

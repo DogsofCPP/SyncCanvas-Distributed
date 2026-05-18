@@ -1,0 +1,8 @@
+﻿name,strokeType,pointCount,epsilon,originalCount,simplifiedCount,reduction,originalBytes,simplifiedBytes,byteReduction,timeMs
+epsilon=0.5,random,500,0.5,500,492,1.6%,32645,32120,1.6%,4.752
+epsilon=1,random,500,1,500,485,3.0%,32245,31281,3.0%,0.983
+epsilon=2,random,500,2,500,472,5.6%,32325,30513,5.6%,0.678
+epsilon=3,random,500,3,500,455,9.0%,32752,29813,9.0%,0.262
+epsilon=5,random,500,5,500,424,15.2%,32006,27141,15.2%,0.213
+epsilon=10,random,500,10,500,347,30.6%,32498,22563,30.6%,0.428
+epsilon=20,random,500,20,500,252,49.6%,32619,16427,49.6%,0.159
