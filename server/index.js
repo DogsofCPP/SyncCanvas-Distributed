@@ -38,7 +38,6 @@ const {
   getLatestSequenceId,
   clearCanvas,
   deleteStrokeById,
-  saveStroke,
   closeMongo,
 } = require('./mongo-client');
 const { initAuthCollections } = require('./auth-mongo');
@@ -368,20 +367,13 @@ async function handleClientMessage(userId, canvasId, data) {
 
   const operation = await buildCanvasOperation(message, userId, canvasId);
 
-  // 1. 同步写入 MongoDB（保证持久化，不依赖 Kafka 批量阈值）
-  try {
-    await saveStroke(operation, canvasId);
-  } catch (err) {
-    console.error(`[MongoDB] 写入失败: ${err.message}`);
-  }
-
-  // 2. Redis 缓存最近 500 条（新用户加入时快速拉取全量历史）
+  // 1. Redis 缓存最近 500 条（新用户加入时快速拉取全量历史）
   await cacheStrokeOperation(canvasId, operation);
 
-  // 3. Redis Pub/Sub 实时广播给同画布的其他客户端
+  // 2. Redis Pub/Sub 实时广播给同画布的其他客户端
   await publish(`canvas:${canvasId}`, operation);
 
-  // 4. Kafka 异步持久化（Consumer 批量写入，兜底重放能力，可选）
+  // 3. Kafka 异步持久化，MongoDB 写入只由 Consumer 批量处理
   sendCanvasOperation(operation).catch(err => {
     console.error(`[Kafka] 发送失败: ${err.message}`);
   });
