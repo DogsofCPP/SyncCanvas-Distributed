@@ -38,6 +38,8 @@ const {
   getLatestSequenceId,
   clearCanvas,
   deleteStrokeById,
+  saveSnapshot,
+  getLatestSnapshot,
   closeMongo,
 } = require('./mongo-client');
 const { initAuthCollections } = require('./auth-mongo');
@@ -90,6 +92,45 @@ const httpServer = http.createServer(async (req, res) => {
     return;
   }
 
+  // 快照 API（无需认证，用于快速加载）
+  const snapshotMatch = pathname.match(/^\/api\/v1\/canvases\/([^/]+)\/snapshots\/latest$/);
+  if (snapshotMatch && req.method === 'GET') {
+    const canvasId = decodeURIComponent(snapshotMatch[1]);
+    try {
+      const { getLatestSnapshot } = require('./mongo-client');
+      const snapshot = await getLatestSnapshot(canvasId);
+      if (snapshot) {
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        });
+        res.end(JSON.stringify({
+          success: true,
+          data: {
+            canvas_id: snapshot.canvas_id,
+            sequence_id: snapshot.sequence_id,
+            svg_data: snapshot.svg_data,
+            created_at: snapshot.created_at
+          }
+        }));
+      } else {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: false,
+          error: { code: 4004, message: '快照不存在' }
+        }));
+      }
+    } catch (err) {
+      console.error(`[Snapshot API] 获取快照失败: ${err.message}`);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: false,
+        error: { code: 5001, message: '服务器内部错误' }
+      }));
+    }
+    return;
+  }
+
   // 静态文件服务
   let filePath = pathname === '/' ? '/index.html' : pathname;
   filePath = path.join(__dirname, '..', 'public', filePath);
@@ -127,6 +168,13 @@ const canvasRooms = new Map();
 
 // canvasId -> Redis subscription callback (用于按画布隔离 Redis 消息)
 const canvasSubscriptions = new Map();
+
+// 快照配置
+const SNAPSHOT_INTERVAL = 100; // 每 100 条操作生成一次快照
+const SNAPSHOT_MIN_INTERVAL_MS = 30000; // 最小 30 秒间隔
+
+// canvasId -> { count: number, lastSnapshotTime: number }
+const canvasSnapshotState = new Map();
 
 /**
  * 解析 WebSocket URL 中的 canvas_id
@@ -229,7 +277,7 @@ function broadcastToCanvas(canvasId, operation) {
 
 /**
  * 加载画布历史操作（新用户加入时全量同步）
- * 优先级：Redis 缓存（最近 500 条） -> MongoDB（全量兜底）
+ * 优先级：Redis 缓存 -> 快照 + 增量 -> MongoDB（全量兜底）
  */
 async function loadCanvasHistory(canvasId) {
   // 1. 先从 Redis 缓存拉（毫秒级，通常能覆盖近期操作）
@@ -259,7 +307,32 @@ async function loadCanvasHistory(canvasId) {
     return cached;
   }
 
-  // 3. 缓存为空，直接从 MongoDB 全量拉
+  // 3. 尝试获取快照，然后加载快照之后的增量操作
+  try {
+    const snapshot = await getLatestSnapshot(canvasId);
+    if (snapshot && snapshot.svg_data) {
+      console.log(`[History] 画布 ${canvasId}: 找到快照 sequence_id=${snapshot.sequence_id}`);
+      
+      // 获取快照之后的增量操作（自快照创建以来新产生的笔画）
+      const incrementalOps = await getStrokesByCanvas(canvasId, {
+        sinceSequenceId: snapshot.sequence_id,
+        limit: 10000,
+      });
+      
+      console.log(`[History] 画布 ${canvasId}: 快照后增量操作 ${incrementalOps.length} 条`);
+      
+      // 返回快照信息和增量操作
+      return [{
+        _snapshot: true,
+        svg_data: snapshot.svg_data,
+        sequence_id: snapshot.sequence_id
+      }, ...incrementalOps];
+    }
+  } catch (err) {
+    console.warn(`[History] 获取快照失败: ${err.message}`);
+  }
+
+  // 4. 缓存和快照都为空，直接从 MongoDB 全量拉
   try {
     const history = await getStrokesByCanvas(canvasId, { limit: 10000 });
     console.log(`[History] 画布 ${canvasId}: MongoDB 全量加载 ${history.length} 条`);
@@ -282,6 +355,127 @@ function generateUserId() {
  */
 function generateStrokeId() {
   return 'stroke-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+}
+
+/**
+ * 生成 SVG 快照数据
+ */
+function generateSvgSnapshot(operations) {
+  // 计算画布边界
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  
+  for (const op of operations) {
+    if (!op.points || op.points.length === 0) continue;
+    for (const p of op.points) {
+      minX = Math.min(minX, p.x);
+      minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x);
+      maxY = Math.max(maxY, p.y);
+    }
+  }
+  
+  // 如果没有笔画，返回空白 SVG
+  if (!isFinite(minX)) {
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080"><rect fill="white" width="1920" height="1080"/></svg>';
+  }
+  
+  // 添加边距
+  const padding = 50;
+  minX = Math.max(0, minX - padding);
+  minY = Math.max(0, minY - padding);
+  maxX = Math.min(1920, maxX + padding);
+  maxY = Math.min(1080, maxY + padding);
+  
+  let svgPaths = '';
+  for (const op of operations) {
+    if (!op.points || op.points.length === 0) continue;
+    
+    const color = op.color || '#000000';
+    const width = op.width || 3;
+    const action = op.action || 'stroke';
+    
+    if (op.points.length === 1) {
+      const p = op.points[0];
+      const r = width / 2;
+      svgPaths += `<circle cx="${p.x}" cy="${p.y}" r="${r}" fill="${color}"/>`;
+    } else {
+      let d = `M ${op.points[0].x} ${op.points[0].y}`;
+      for (let i = 1; i < op.points.length; i++) {
+        const curr = op.points[i];
+        const prev = op.points[i - 1];
+        const midX = (prev.x + curr.x) / 2;
+        const midY = (prev.y + curr.y) / 2;
+        d += ` Q ${prev.x} ${prev.y} ${midX} ${midY}`;
+      }
+      const last = op.points[op.points.length - 1];
+      d += ` L ${last.x} ${last.y}`;
+      
+      if (action === 'erase') {
+        svgPaths += `<path d="${d}" stroke="white" stroke-width="${width * 3}" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`;
+      } else {
+        svgPaths += `<path d="${d}" stroke="${color}" stroke-width="${width}" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`;
+      }
+    }
+  }
+  
+  const svgWidth = maxX - minX;
+  const svgHeight = maxY - minY;
+  
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${svgWidth}" height="${svgHeight}" viewBox="${minX} ${minY} ${svgWidth} ${svgHeight}"><rect fill="white" width="${svgWidth}" height="${svgHeight}"/>${svgPaths}</svg>`;
+}
+
+/**
+ * 检查并生成快照（按操作数量或时间间隔触发）
+ */
+async function checkAndGenerateSnapshot(canvasId) {
+  // 获取画布快照状态
+  let state = canvasSnapshotState.get(canvasId);
+  if (!state) {
+    state = { count: 0, lastSnapshotTime: 0 };
+    canvasSnapshotState.set(canvasId, state);
+  }
+  
+  state.count++;
+  
+  const now = Date.now();
+  const timeSinceLastSnapshot = now - state.lastSnapshotTime;
+  
+  // 检查是否满足快照生成条件：操作数 >= 100 或 间隔 >= 30秒（取 min，更快触发）
+  const shouldSnapshot = 
+    state.count >= SNAPSHOT_INTERVAL || 
+    timeSinceLastSnapshot >= SNAPSHOT_MIN_INTERVAL_MS;
+  
+  if (!shouldSnapshot) {
+    return;
+  }
+  
+  // 重置计数器和时间
+  state.count = 0;
+  state.lastSnapshotTime = now;
+  
+  try {
+    // 获取所有笔画
+    const operations = await getStrokesByCanvas(canvasId, { limit: 100000 });
+    
+    if (operations.length === 0) {
+      return;
+    }
+    
+    // 获取最新 sequence_id
+    const latestSeqId = operations.length > 0 
+      ? operations[operations.length - 1].sequence_id 
+      : 0;
+    
+    // 生成 SVG 快照
+    const svgData = generateSvgSnapshot(operations);
+    
+    // 保存快照
+    await saveSnapshot(canvasId, latestSeqId, svgData);
+    
+    console.log(`[Snapshot] 画布 ${canvasId} 生成快照，sequence_id=${latestSeqId}，笔画数=${operations.length}，SVG大小=${svgData.length}字节`);
+  } catch (err) {
+    console.error(`[Snapshot] 生成快照失败: ${err.message}`);
+  }
 }
 
 /**
@@ -338,11 +532,30 @@ async function handleClientMessage(userId, canvasId, data) {
     return;
   }
 
-  // 处理单个笔画撤销操作
+  // 处理单个笔画撤销操作（只允许撤销自己的笔画）
   if (message.type === 'undo' || message.action === 'undo') {
     const strokeId = message.stroke_id;
     if (!strokeId) {
       console.warn(`[Undo] 缺少 stroke_id`);
+      return;
+    }
+
+    // 验证该笔画是否属于当前用户
+    const { getStrokeById } = require('./mongo-client');
+    const stroke = await getStrokeById(strokeId);
+    
+    if (!stroke) {
+      console.warn(`[Undo] 笔画 ${strokeId} 不存在`);
+      return;
+    }
+
+    if (stroke.user_id !== userId) {
+      console.warn(`[Undo] 用户 ${userId} 无权撤销用户 ${stroke.user_id} 的笔画 ${strokeId}`);
+      ws.send(JSON.stringify({
+        type: 'error',
+        code: 4003,
+        message: '只能撤销自己的笔画'
+      }));
       return;
     }
 
@@ -373,7 +586,12 @@ async function handleClientMessage(userId, canvasId, data) {
   // 2. Redis Pub/Sub 实时广播给同画布的其他客户端
   await publish(`canvas:${canvasId}`, operation);
 
-  // 3. Kafka 异步持久化，MongoDB 写入只由 Consumer 批量处理
+  // 3. 检查是否需要生成快照
+  checkAndGenerateSnapshot(canvasId).catch(err => {
+    console.error(`[Snapshot] 检查失败: ${err.message}`);
+  });
+
+  // 4. Kafka 异步持久化，MongoDB 写入只由 Consumer 批量处理
   sendCanvasOperation(operation).catch(err => {
     console.error(`[Kafka] 发送失败: ${err.message}`);
   });

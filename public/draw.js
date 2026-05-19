@@ -7,7 +7,6 @@
   const strokeWidth = document.getElementById('strokeWidth');
   const widthValue = document.getElementById('widthValue');
   const undoBtn = document.getElementById('undoBtn');
-  const redoBtn = document.getElementById('redoBtn');
   const clearBtn = document.getElementById('clearBtn');
   const wsStatus = document.getElementById('wsStatus');
   const userIdEl = document.getElementById('userId');
@@ -27,8 +26,6 @@
   const wsBaseUrl = isLocalhost ? 'ws://localhost:3000/ws' : wsProtocol + '//' + window.location.host + '/ws';
   const backgroundColor = '#ffffff';
   const operations = [];
-  const undoneKeys = new Set();
-  const strokeRenderState = new Map();
 
   let currentUserId = null;
   let currentCanvasId = null;
@@ -57,8 +54,6 @@
 
   function resetCanvasState() {
     operations.length = 0;
-    undoneKeys.clear();
-    strokeRenderState.clear();
     latestSequenceId = 0;
     localSequenceId = Date.now();
     isDrawing = false;
@@ -66,7 +61,7 @@
     onlineCountEl.textContent = '0';
     userIdEl.textContent = currentUserId || '-';
     updateSequenceStatus();
-    updateUndoRedoButtons();
+    updateUndoButton();
     clearCanvas();
   }
 
@@ -158,6 +153,28 @@
     ctx.restore();
   }
 
+  function renderSvgSnapshot(svgData) {
+    // 创建 Image 从 SVG 数据加载
+    const img = new Image();
+    const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
+    
+    img.onload = function() {
+      // 清除画布并绘制 SVG
+      clearCanvas();
+      ctx.drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+      console.log('[SyncCanvas] 快照渲染完成');
+    };
+    
+    img.onerror = function() {
+      console.error('[SyncCanvas] 快照渲染失败');
+      URL.revokeObjectURL(url);
+    };
+    
+    img.src = url;
+  }
+
   function normalizeOperation(message, options = {}) {
     const points = Array.isArray(message.points)
       ? message.points.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
@@ -222,30 +239,24 @@
 
     operations.sort(compareOperations);
     updateSequenceStatus();
-    updateUndoRedoButtons();
+    updateUndoButton();
   }
 
-  function drawOperation(operation, stateMap) {
+  function drawOperation(operation) {
     const style = getDrawStyle(operation.action, operation.color, operation.width);
-    const history = stateMap.get(operation.stroke_id) || [];
-    const points = history.concat(operation.points);
-
-    drawSmoothPoints(points, style.color, style.width);
-    stateMap.set(operation.stroke_id, points.slice(-2));
+    drawSmoothPoints(operation.points, style.color, style.width);
   }
 
   function redrawCanvas() {
     console.log('[SyncCanvas] redrawCanvas called, operations.length:', operations.length);
     clearCanvas();
-    strokeRenderState.clear();
     
-    const visibleOps = operations.filter((operation) => !undoneKeys.has(getOperationKey(operation)));
-    console.log('[SyncCanvas] visible operations:', visibleOps.length);
+    console.log('[SyncCanvas] visible operations:', operations.length);
     
-    visibleOps
+    operations
       .sort(compareOperations)
       .forEach((operation) => {
-        drawOperation(operation, strokeRenderState);
+        drawOperation(operation);
       });
   }
 
@@ -328,33 +339,57 @@
       });
 
       operations.length = 0;
-      undoneKeys.clear();
-      strokeRenderState.clear();
 
-      if (Array.isArray(message.operations)) {
-        message.operations.forEach((item) => {
+      if (!Array.isArray(message.operations) || message.operations.length === 0) {
+        console.log('[SyncCanvas] 无历史操作');
+        redrawCanvas();
+        updateSequenceStatus();
+        updateUndoButton();
+        return;
+      }
+
+      // 检查第一个操作是否是快照
+      const firstOp = message.operations[0];
+      if (firstOp._snapshot) {
+        console.log('[SyncCanvas] 使用快照 + 增量加载');
+        
+        // 渲染 SVG 快照
+        renderSvgSnapshot(firstOp.svg_data);
+        latestSequenceId = Number(firstOp.sequence_id) || 0;
+        
+        // 处理增量操作（快照之后的操作）
+        for (let i = 1; i < message.operations.length; i++) {
+          const item = message.operations[i];
           const operation = normalizeOperation(item);
           if (operation.points.length > 0) {
             operations.push(operation);
           }
-        });
+        }
+      } else {
+        // 普通模式：直接加载所有操作
+        for (const item of message.operations) {
+          const operation = normalizeOperation(item);
+          if (operation.points.length > 0) {
+            operations.push(operation);
+          }
+        }
       }
 
       console.log('[SyncCanvas] 处理后的 operations:', operations.length);
 
       operations.sort(compareOperations);
-      latestSequenceId = operations.reduce((max, operation) => (
-        Math.max(max, Number(operation.sequence_id) || 0)
-      ), 0);
+      latestSequenceId = Math.max(
+        latestSequenceId,
+        operations.reduce((max, operation) => Math.max(max, Number(operation.sequence_id) || 0), 0)
+      );
       
       console.log('[SyncCanvas] 排序后 latestSequenceId:', latestSequenceId);
-      console.log('[SyncCanvas] 即将调用 redrawCanvas');
       
       redrawCanvas();
       updateSequenceStatus();
-      updateUndoRedoButtons();
+      updateUndoButton();
       
-      console.log('[SyncCanvas] redrawCanvas 完成');
+      console.log('[SyncCanvas] 历史加载完成');
       return;
     }
 
@@ -362,38 +397,26 @@
     if (message.type === 'clear' || message.action === 'clear' || message.msg_type === 'clear') {
       console.log(`[SyncCanvas] 收到清空画布广播 from ${message.user_id}`);
       operations.length = 0;
-      undoneKeys.clear();
-      strokeRenderState.clear();
       latestSequenceId = Number(message.sequence_id) || 0;
       redrawCanvas();
       updateSequenceStatus();
-      updateUndoRedoButtons();
+      updateUndoButton();
       return;
     }
 
-    // 处理服务器广播的撤销笔画消息
+    // 处理服务器广播的撤销笔画消息（从数据库删除后同步到所有客户端）
     if (message.type === 'undo' || message.action === 'undo' || message.msg_type === 'undo') {
       const strokeId = message.stroke_id;
       if (strokeId) {
         console.log(`[SyncCanvas] 收到撤销笔画广播 from ${message.user_id}: ${strokeId}`);
-        // 从本地操作列表中移除该笔画
+        // 从本地操作列表中物理删除该笔画
         const index = operations.findIndex((op) => op.stroke_id === strokeId);
         if (index >= 0) {
           operations.splice(index, 1);
         }
-        // 重建 undoneKeys，排除被撤销的 stroke_id
-        const newUndoneKeys = new Set();
-        undoneKeys.forEach((key) => {
-          if (!key.includes(strokeId)) {
-            newUndoneKeys.add(key);
-          }
-        });
-        undoneKeys.clear();
-        newUndoneKeys.forEach((key) => undoneKeys.add(key));
-
         redrawCanvas();
         updateSequenceStatus();
-        updateUndoRedoButtons();
+        updateUndoButton();
       }
       return;
     }
@@ -418,36 +441,39 @@
     sequenceIdEl.textContent = String(latestSequenceId);
   }
 
-  function updateUndoRedoButtons() {
-    const hasVisibleOperation = operations.some((operation) => !undoneKeys.has(getOperationKey(operation)));
-    undoBtn.disabled = !hasVisibleOperation;
-    redoBtn.disabled = undoneKeys.size === 0;
+  function updateUndoButton() {
+    const hasOperations = operations.length > 0;
+    undoBtn.disabled = !hasOperations;
   }
 
   function undoLastOperation() {
-    const visibleOperations = operations
-      .filter((operation) => !undoneKeys.has(getOperationKey(operation)))
+    // 只获取当前用户自己的笔画（按 sequence_id 排序，取最后一个）
+    const sortedOps = [...operations]
+      .filter((op) => op.user_id === currentUserId)
       .sort(compareOperations);
-    const operation = visibleOperations[visibleOperations.length - 1];
+    const operation = sortedOps[sortedOps.length - 1];
 
-    if (!operation) return;
+    if (!operation) {
+      console.log('[SyncCanvas] 没有可撤销的笔画（当前用户）');
+      return;
+    }
 
-    undoneKeys.add(getOperationKey(operation));
+    // 发送撤销消息到服务器（服务器会从数据库删除）
+    collector.send({
+      type: 'undo',
+      canvas_id: currentCanvasId,
+      action: 'undo',
+      stroke_id: operation.stroke_id,
+    });
+
+    // 本地从数组中删除该笔画
+    const index = operations.findIndex((op) => op.stroke_id === operation.stroke_id);
+    if (index >= 0) {
+      operations.splice(index, 1);
+    }
+
     redrawCanvas();
-    updateUndoRedoButtons();
-  }
-
-  function redoLastOperation() {
-    const undoneOperations = operations
-      .filter((operation) => undoneKeys.has(getOperationKey(operation)))
-      .sort(compareOperations);
-    const operation = undoneOperations[undoneOperations.length - 1];
-
-    if (!operation) return;
-
-    undoneKeys.delete(getOperationKey(operation));
-    redrawCanvas();
-    updateUndoRedoButtons();
+    updateUndoButton();
   }
 
   function openCanvas(canvasId, canvasName) {
@@ -500,28 +526,7 @@
     collector.setWidth(width);
   });
 
-  undoBtn.addEventListener('click', () => {
-    const visibleOperations = operations
-      .filter((operation) => !undoneKeys.has(getOperationKey(operation)))
-      .sort(compareOperations);
-    const operation = visibleOperations[visibleOperations.length - 1];
-
-    if (!operation) return;
-
-    // 发送撤销消息到服务器
-    collector.send({
-      type: 'undo',
-      canvas_id: currentCanvasId,
-      action: 'undo',
-      stroke_id: operation.stroke_id,
-    });
-
-    // 本地撤销
-    undoneKeys.add(getOperationKey(operation));
-    redrawCanvas();
-    updateUndoRedoButtons();
-  });
-  redoBtn.addEventListener('click', redoLastOperation);
+  undoBtn.addEventListener('click', undoLastOperation);
 
   clearBtn.addEventListener('click', () => {
     if (operations.length === 0) {
@@ -543,11 +548,10 @@
 
     // 本地清空
     operations.length = 0;
-    undoneKeys.clear();
     latestSequenceId = 0;
     redrawCanvas();
     updateSequenceStatus();
-    updateUndoRedoButtons();
+    updateUndoButton();
   });
 
   canvas.addEventListener('mousedown', (event) => {
@@ -597,7 +601,7 @@
   collector.setColor(colorPicker.value);
   collector.setWidth(Number(strokeWidth.value));
   updateSequenceStatus();
-  updateUndoRedoButtons();
+  updateUndoButton();
 
   window.SyncCanvasDraw = {
     openCanvas,

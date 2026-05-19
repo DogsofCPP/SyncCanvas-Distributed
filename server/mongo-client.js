@@ -15,6 +15,7 @@ const MONGO_PORT = process.env.MONGO_PORT || 27017;
 const MONGO_URI = process.env.MONGO_URI || `mongodb://${MONGO_HOST}:${MONGO_PORT}`;
 const DB_NAME = process.env.MONGO_DB_NAME || 'synccanvas';
 const COLLECTION_STROKES = 'strokes';
+const COLLECTION_SNAPSHOTS = 'snapshots';
 
 /**
  * MongoDB 客户端实例
@@ -61,6 +62,16 @@ async function ensureIndexes() {
   await collection.createIndex({ canvas_id: 1, sequence_id: 1 });
   // 用户操作历史
   await collection.createIndex({ user_id: 1, timestamp: -1 });
+
+  // snapshots 集合索引
+  const snapshotsCollection = db.collection(COLLECTION_SNAPSHOTS);
+  await snapshotsCollection.createIndex(
+    { canvas_id: 1, sequence_id: 1 },
+    { unique: true }
+  );
+  await snapshotsCollection.createIndex(
+    { canvas_id: 1, created_at: -1 }
+  );
 
   console.log('[MongoDB] 索引已创建');
 }
@@ -303,6 +314,76 @@ async function getStrokesCount(canvasId = 'default') {
 }
 
 /**
+ * 保存画布快照
+ *
+ * @param {string} canvasId 画布 ID
+ * @param {number} sequenceId 快照对应的最新 sequence_id
+ * @param {string} svgData SVG 数据
+ * @returns {Promise<object>} 保存结果
+ */
+async function saveSnapshot(canvasId, sequenceId, svgData) {
+  const collection = db.collection(COLLECTION_SNAPSHOTS);
+  const result = await collection.updateOne(
+    { canvas_id: canvasId, sequence_id: sequenceId },
+    {
+      $set: {
+        canvas_id: canvasId,
+        sequence_id: sequenceId,
+        svg_data: svgData,
+        created_at: new Date()
+      }
+    },
+    { upsert: true }
+  );
+  return result;
+}
+
+/**
+ * 获取画布的最新快照
+ *
+ * @param {string} canvasId 画布 ID
+ * @returns {Promise<object|null>} 快照对象或 null
+ */
+async function getLatestSnapshot(canvasId) {
+  const collection = db.collection(COLLECTION_SNAPSHOTS);
+  const snapshot = await collection
+    .find({ canvas_id: canvasId })
+    .sort({ sequence_id: -1 })
+    .limit(1)
+    .toArray();
+
+  return snapshot.length > 0 ? snapshot[0] : null;
+}
+
+/**
+ * 获取指定 sequence_id 的快照
+ *
+ * @param {string} canvasId 画布 ID
+ * @param {number} sequenceId 序列号
+ * @returns {Promise<object|null>} 快照对象或 null
+ */
+async function getSnapshotBySequenceId(canvasId, sequenceId) {
+  const collection = db.collection(COLLECTION_SNAPSHOTS);
+  const snapshot = await collection.findOne({
+    canvas_id: canvasId,
+    sequence_id: sequenceId
+  });
+  return snapshot;
+}
+
+/**
+ * 删除画布的所有快照
+ *
+ * @param {string} canvasId 画布 ID
+ * @returns {Promise<object>} 删除结果
+ */
+async function clearSnapshots(canvasId) {
+  const collection = db.collection(COLLECTION_SNAPSHOTS);
+  const result = await collection.deleteMany({ canvas_id: canvasId });
+  return result;
+}
+
+/**
  * 关闭 MongoDB 连接
  */
 async function closeMongo() {
@@ -333,6 +414,7 @@ module.exports = {
   MONGO_URI,
   DB_NAME,
   COLLECTION_STROKES,
+  COLLECTION_SNAPSHOTS,
   connectMongo,
   saveStroke,
   saveStrokesBatch,
@@ -343,6 +425,10 @@ module.exports = {
   clearCanvas,
   deleteStrokeById,
   getStrokesCount,
+  saveSnapshot,
+  getLatestSnapshot,
+  getSnapshotBySequenceId,
+  clearSnapshots,
   closeMongo,
   healthCheck,
 };
