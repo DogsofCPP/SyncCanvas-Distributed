@@ -15,8 +15,17 @@
   const sequenceIdEl = document.getElementById('sequenceId');
   const currentCanvasLabel = document.getElementById('currentCanvasLabel');
 
+  // 检测当前环境，自动选择 WebSocket 地址
+  const isLocalhost = window.location.hostname === 'localhost' || 
+                      window.location.hostname === '127.0.0.1' ||
+                      window.location.hostname.startsWith('192.168.') ||
+                      window.location.hostname.startsWith('10.') ||
+                      window.location.hostname.startsWith('198.18.');
+  
+  // HTTPS 页面必须使用 wss://，HTTP 页面使用 ws://
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsBaseUrl = isLocalhost ? 'ws://localhost:3000/ws' : wsProtocol + '//' + window.location.host + '/ws';
   const backgroundColor = '#ffffff';
-  const wsBaseUrl = 'ws://localhost:3000/ws';
   const operations = [];
   const undoneKeys = new Set();
   const strokeRenderState = new Map();
@@ -155,7 +164,7 @@
       : [];
     const action = message.action || message.msg_type || 'stroke';
 
-    return {
+    const operation = {
       action: action === 'erase' ? 'erase' : 'stroke',
       canvas_id: message.canvas_id || currentCanvasId,
       stroke_id: message.stroke_id || crypto.randomUUID(),
@@ -169,6 +178,8 @@
       local_key: options.localKey || null,
       optimistic: Boolean(options.optimistic)
     };
+    
+    return operation;
   }
 
   function getOperationKey(operation) {
@@ -224,12 +235,18 @@
   }
 
   function redrawCanvas() {
+    console.log('[SyncCanvas] redrawCanvas called, operations.length:', operations.length);
     clearCanvas();
     strokeRenderState.clear();
-    operations
-      .filter((operation) => !undoneKeys.has(getOperationKey(operation)))
+    
+    const visibleOps = operations.filter((operation) => !undoneKeys.has(getOperationKey(operation)));
+    console.log('[SyncCanvas] visible operations:', visibleOps.length);
+    
+    visibleOps
       .sort(compareOperations)
-      .forEach((operation) => drawOperation(operation, strokeRenderState));
+      .forEach((operation) => {
+        drawOperation(operation, strokeRenderState);
+      });
   }
 
   function handleLocalSegment(segment) {
@@ -303,6 +320,13 @@
     }
 
     if (message.type === 'sync_response') {
+      console.log('[SyncCanvas] 收到 sync_response:', {
+        canvas_id: message.canvas_id,
+        operations_count: message.operations?.length || 0,
+        latest_sequence_id: message.latest_sequence_id,
+        total: message.total
+      });
+
       operations.length = 0;
       undoneKeys.clear();
       strokeRenderState.clear();
@@ -316,13 +340,21 @@
         });
       }
 
+      console.log('[SyncCanvas] 处理后的 operations:', operations.length);
+
       operations.sort(compareOperations);
       latestSequenceId = operations.reduce((max, operation) => (
         Math.max(max, Number(operation.sequence_id) || 0)
       ), 0);
+      
+      console.log('[SyncCanvas] 排序后 latestSequenceId:', latestSequenceId);
+      console.log('[SyncCanvas] 即将调用 redrawCanvas');
+      
       redrawCanvas();
       updateSequenceStatus();
       updateUndoRedoButtons();
+      
+      console.log('[SyncCanvas] redrawCanvas 完成');
       return;
     }
 

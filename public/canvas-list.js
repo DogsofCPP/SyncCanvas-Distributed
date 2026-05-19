@@ -1,5 +1,13 @@
 (function () {
-  const API_BASE = 'http://localhost:3000/api/v1';
+  // 检测当前环境，自动选择 API 地址
+  const isLocalhost = window.location.hostname === 'localhost' || 
+                      window.location.hostname === '127.0.0.1' ||
+                      window.location.hostname.startsWith('192.168.') ||
+                      window.location.hostname.startsWith('10.') ||
+                      window.location.hostname.startsWith('198.18.');
+  
+  const API_BASE = isLocalhost ? 'http://localhost:3000/api/v1' : window.location.origin + '/api/v1';
+  const WS_BASE = isLocalhost ? 'ws://localhost:3000/ws' : 'ws://' + window.location.host + '/ws';
   const STORAGE_TOKEN = 'synccanvas.token';
   const STORAGE_USER = 'synccanvas.user';
 

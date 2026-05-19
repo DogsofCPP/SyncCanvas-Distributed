@@ -130,6 +130,64 @@ redisSubscriber.on('message', (ch, message) => {
 });
 
 /**
+ * Redis 缓存最近 N 条操作（用于新用户加入时快速全量同步）
+ * key: canvas:{canvasId}  -> List[LIMIT 条最新操作 JSON]
+ */
+const CANVAS_CACHE_LIMIT = 500;
+
+/**
+ * 将操作写入画布缓存（LPUSH + LTRIM 保持最近 N 条）
+ */
+async function cacheStrokeOperation(canvasId, operation) {
+  try {
+    const key = `canvas:${canvasId}`;
+    await redisClient.lpush(key, JSON.stringify(operation));
+    await redisClient.ltrim(key, 0, CANVAS_CACHE_LIMIT - 1);
+  } catch (err) {
+    console.error(`[Redis] 缓存写入失败: ${err.message}`);
+  }
+}
+
+/**
+ * 读取画布缓存中的所有操作（按 sequence_id 升序返回）
+ */
+async function getCachedOperations(canvasId) {
+  try {
+    const key = `canvas:${canvasId}`;
+    const raw = await redisClient.lrange(key, 0, CANVAS_CACHE_LIMIT - 1);
+    if (!raw || raw.length === 0) return [];
+
+    const operations = raw
+      .map(item => {
+        try { return JSON.parse(item); } catch { return null; }
+      })
+      .filter(Boolean);
+
+    // 按 sequence_id 升序排列
+    operations.sort((a, b) => (a.sequence_id || 0) - (b.sequence_id || 0));
+    return operations;
+  } catch (err) {
+    console.error(`[Redis] 缓存读取失败: ${err.message}`);
+    return [];
+  }
+}
+
+/**
+ * 获取缓存中最新一条操作的 sequence_id
+ */
+async function getCachedLatestSeqId(canvasId) {
+  try {
+    const key = `canvas:${canvasId}`;
+    const raw = await redisClient.lindex(key, 0);
+    if (!raw) return 0;
+    const op = JSON.parse(raw);
+    return op.sequence_id || 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
  * 关闭 Redis 连接
  */
 async function closeRedis() {
@@ -142,9 +200,14 @@ module.exports = {
   REDIS_HOST,
   REDIS_PORT,
   CHANNEL_CANVAS_OPERATIONS,
+  CANVAS_CACHE_LIMIT,
   getNextSequenceId,
   publish,
   subscribe,
   unsubscribe,
+  cacheStrokeOperation,
+  getCachedOperations,
+  getCachedLatestSeqId,
   closeRedis,
+  _redisClient: redisClient,
 };

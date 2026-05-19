@@ -26,7 +26,11 @@ const {
   publish,
   subscribe,
   unsubscribe,
+  cacheStrokeOperation,
+  getCachedOperations,
+  getCachedLatestSeqId,
   closeRedis,
+  _redisClient,
 } = require('./redis-client');
 const {
   connectMongo,
@@ -34,6 +38,7 @@ const {
   getLatestSequenceId,
   clearCanvas,
   deleteStrokeById,
+  saveStroke,
   closeMongo,
 } = require('./mongo-client');
 const { initAuthCollections } = require('./auth-mongo');
@@ -224,12 +229,41 @@ function broadcastToCanvas(canvasId, operation) {
 }
 
 /**
- * 加载画布历史操作
+ * 加载画布历史操作（新用户加入时全量同步）
+ * 优先级：Redis 缓存（最近 500 条） -> MongoDB（全量兜底）
  */
 async function loadCanvasHistory(canvasId) {
+  // 1. 先从 Redis 缓存拉（毫秒级，通常能覆盖近期操作）
+  const cached = await getCachedOperations(canvasId);
+  if (cached && cached.length > 0) {
+    const cachedSeqId = cached[cached.length - 1].sequence_id || 0;
+    console.log(`[History] 画布 ${canvasId}: Redis 缓存命中 ${cached.length} 条, 最新 seq=${cachedSeqId}`);
+
+    // 2. 从 MongoDB 补拉缓存之后的增量
+    const dbOps = await getStrokesByCanvas(canvasId, {
+      sinceSequenceId: cachedSeqId,
+      limit: 10000,
+    });
+
+    if (dbOps && dbOps.length > 0) {
+      // 合并去重（dbOps 的 sequence_id > cachedSeqId）
+      const merged = [...cached];
+      for (const op of dbOps) {
+        const exists = merged.some(m => m.stroke_id === op.stroke_id);
+        if (!exists) merged.push(op);
+      }
+      merged.sort((a, b) => (a.sequence_id || 0) - (b.sequence_id || 0));
+      console.log(`[History] 画布 ${canvasId}: MongoDB 补充 ${dbOps.length} 条增量, 合计 ${merged.length} 条`);
+      return merged;
+    }
+
+    return cached;
+  }
+
+  // 3. 缓存为空，直接从 MongoDB 全量拉
   try {
     const history = await getStrokesByCanvas(canvasId, { limit: 10000 });
-    console.log(`[MongoDB] 画布 ${canvasId}: 已加载 ${history.length} 条历史操作`);
+    console.log(`[History] 画布 ${canvasId}: MongoDB 全量加载 ${history.length} 条`);
     return history;
   } catch (err) {
     console.error(`[!] 加载历史失败: ${err.message}`);
@@ -292,6 +326,12 @@ async function handleClientMessage(userId, canvasId, data) {
 
     // 删除 MongoDB 中的所有笔画
     await clearCanvas(canvasId);
+
+    // 清除 Redis 缓存
+    try {
+      await _redisClient.del(`canvas:${canvasId}`);
+    } catch (_) {}
+
     console.log(`[Clear] 用户 ${userId} 清空了画布 ${canvasId}`);
 
     // 广播给所有客户端（包括发送者，用于同步状态）
@@ -328,10 +368,23 @@ async function handleClientMessage(userId, canvasId, data) {
 
   const operation = await buildCanvasOperation(message, userId, canvasId);
 
-  // Redis Pub/Sub 实时广播给同画布的其他客户端
+  // 1. 同步写入 MongoDB（保证持久化，不依赖 Kafka 批量阈值）
+  try {
+    await saveStroke(operation, canvasId);
+  } catch (err) {
+    console.error(`[MongoDB] 写入失败: ${err.message}`);
+  }
+
+  // 2. Redis 缓存最近 500 条（新用户加入时快速拉取全量历史）
+  await cacheStrokeOperation(canvasId, operation);
+
+  // 3. Redis Pub/Sub 实时广播给同画布的其他客户端
   await publish(`canvas:${canvasId}`, operation);
-  // Kafka 异步持久化（由 kafka-consumer.js 批量写入 MongoDB）
-  await sendCanvasOperation(operation);
+
+  // 4. Kafka 异步持久化（Consumer 批量写入，兜底重放能力，可选）
+  sendCanvasOperation(operation).catch(err => {
+    console.error(`[Kafka] 发送失败: ${err.message}`);
+  });
 }
 
 /**
@@ -353,7 +406,7 @@ wss.on('connection', async (ws, req) => {
   }));
 
   if (canvasId) {
-    joinCanvasRoom(userId, canvasId);
+    await joinCanvasRoom(userId, canvasId);
 
     await subscribeCanvas(canvasId);
 
@@ -380,7 +433,7 @@ wss.on('connection', async (ws, req) => {
       const msgCanvasId = msg.canvas_id || canvasId;
       if (msgCanvasId && msgCanvasId !== canvasId) {
         await leaveCanvasRoom(userId, canvasId);
-        joinCanvasRoom(userId, msgCanvasId);
+        await joinCanvasRoom(userId, msgCanvasId);
         clientInfo.canvasId = msgCanvasId;
         await subscribeCanvas(msgCanvasId);
 
