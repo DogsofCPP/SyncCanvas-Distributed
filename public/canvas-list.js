@@ -155,15 +155,15 @@
       toggleBtn.textContent = isRegisterMode ? '已有账号？登录' : '没有账号？注册';
     }
     if (passwordLabel) {
-      passwordLabel.style.display = isRegisterMode ? 'block' : 'none';
+      passwordLabel.style.display = 'block';
     }
     if (passwordInput) {
-      passwordInput.style.display = isRegisterMode ? 'block' : 'none';
+      passwordInput.style.display = 'block';
       if (isRegisterMode) {
         passwordInput.required = true;
         passwordInput.placeholder = '输入密码（6位以上）';
       } else {
-        passwordInput.required = false;
+        passwordInput.required = true;
         passwordInput.placeholder = '输入密码';
       }
     }

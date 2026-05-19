@@ -18,6 +18,10 @@ const {
   closeKafkaProducer,
 } = require('./kafka-producer');
 const {
+  initKafkaConsumer,
+  closeKafkaConsumer,
+} = require('./kafka-consumer');
+const {
   getNextSequenceId,
   publish,
   subscribe,
@@ -38,6 +42,7 @@ const { handleAuthRoute } = require('./routes/auth');
 const { handleCanvasRoute } = require('./routes/canvas');
 
 const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || '0.0.0.0';
 const WS_PATH = '/ws';
 
 // ==================== HTTP 服务 ====================
@@ -421,15 +426,28 @@ async function startServer() {
   await connectMongo();
   await initAuthCollections();
   await initKafkaProducer();
+  await initKafkaConsumer();
 
-  httpServer.listen(PORT, () => {
+  httpServer.listen(PORT, HOST, () => {
     console.log('===========================================');
     console.log(' SyncCanvas 网关服务 v2.0');
-    console.log(` HTTP API:  http://localhost:${PORT}/api/v1/`);
-    console.log(` WebSocket: ws://localhost:${PORT}/ws`);
-    console.log(` 提示: 打开 http://localhost:${PORT} 访问应用`);
+    console.log(` HTTP API:  http://${HOST === '0.0.0.0' ? getLocalIP() : HOST}:${PORT}/api/v1/`);
+    console.log(` WebSocket: ws://${HOST === '0.0.0.0' ? getLocalIP() : HOST}:${PORT}/ws`);
+    console.log(` 提示: 打开 http://${HOST === '0.0.0.0' ? getLocalIP() : HOST}:${PORT} 访问应用`);
     console.log('===========================================');
   });
+
+function getLocalIP() {
+  const nets = require('os').networkInterfaces();
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name]) {
+      if (net.family === 'IPv4' && !net.internal) {
+        return net.address;
+      }
+    }
+  }
+  return 'localhost';
+}
 }
 
 async function gracefulShutdown(signal) {
@@ -439,6 +457,12 @@ async function gracefulShutdown(signal) {
     await closeKafkaProducer();
   } catch (err) {
     console.error(`[!] Kafka Producer 关闭失败: ${err.message}`);
+  }
+
+  try {
+    await closeKafkaConsumer();
+  } catch (err) {
+    console.error(`[!] Kafka Consumer 关闭失败: ${err.message}`);
   }
 
   try {
