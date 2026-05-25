@@ -4,28 +4,31 @@
   const penBtn = document.getElementById('penBtn');
   const eraserBtn = document.getElementById('eraserBtn');
   const colorPicker = document.getElementById('colorPicker');
+  const colorSwatches = Array.from(document.querySelectorAll('.color-swatch'));
   const strokeWidth = document.getElementById('strokeWidth');
   const widthValue = document.getElementById('widthValue');
   const undoBtn = document.getElementById('undoBtn');
   const clearBtn = document.getElementById('clearBtn');
   const wsStatus = document.getElementById('wsStatus');
+  const replayStatus = document.getElementById('replayStatus');
   const userIdEl = document.getElementById('userId');
   const onlineCountEl = document.getElementById('onlineCount');
   const sequenceIdEl = document.getElementById('sequenceId');
   const currentCanvasLabel = document.getElementById('currentCanvasLabel');
+  const cursorLayer = document.getElementById('cursorLayer');
 
-  // 检测当前环境，自动选择 WebSocket 地址
-  const isLocalhost = window.location.hostname === 'localhost' || 
-                      window.location.hostname === '127.0.0.1' ||
-                      window.location.hostname.startsWith('192.168.') ||
-                      window.location.hostname.startsWith('10.') ||
-                      window.location.hostname.startsWith('198.18.');
-  
-  // HTTPS 页面必须使用 wss://，HTTP 页面使用 ws://
+  const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname) ||
+    window.location.hostname.startsWith('192.168.') ||
+    window.location.hostname.startsWith('10.') ||
+    window.location.hostname.startsWith('198.18.');
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsBaseUrl = isLocalhost ? 'ws://localhost:3000/ws' : wsProtocol + '//' + window.location.host + '/ws';
+  const apiBaseUrl = isLocalhost ? 'http://localhost:3000/api/v1' : `${window.location.origin}/api/v1`;
+  const wsBaseUrl = isLocalhost ? 'ws://localhost:3000/ws' : `${wsProtocol}//${window.location.host}/ws`;
   const backgroundColor = '#ffffff';
   const operations = [];
+  const remoteCursors = new Map();
+  const offscreenCanvas = document.createElement('canvas');
+  const offscreenCtx = offscreenCanvas.getContext('2d');
 
   let currentUserId = null;
   let currentCanvasId = null;
@@ -35,34 +38,61 @@
   let isDrawing = false;
   let lastPoint = null;
   let collectorStarted = false;
+  let presentQueued = false;
+  let replayRequestId = 0;
+  let lastCursorSentAt = 0;
+  let baseSnapshotImage = null;
 
   function buildWsUrl(canvasId) {
     return `${wsBaseUrl}?canvas_id=${encodeURIComponent(canvasId)}`;
   }
 
+  function getAuthToken() {
+    return window.SyncCanvasApp && window.SyncCanvasApp.getToken
+      ? window.SyncCanvasApp.getToken()
+      : localStorage.getItem('synccanvas.token');
+  }
+
   function resizeCanvas() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    canvas.width = width;
+    canvas.height = height;
+    offscreenCanvas.width = width;
+    offscreenCanvas.height = height;
     redrawCanvas();
   }
 
-  function clearCanvas() {
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = backgroundColor;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  function clearRenderTarget(targetCtx) {
+    targetCtx.setTransform(1, 0, 0, 1, 0, 0);
+    targetCtx.fillStyle = backgroundColor;
+    targetCtx.fillRect(0, 0, targetCtx.canvas.width, targetCtx.canvas.height);
+  }
+
+  function schedulePresent() {
+    if (presentQueued) return;
+    presentQueued = true;
+    requestAnimationFrame(() => {
+      presentQueued = false;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(offscreenCanvas, 0, 0);
+    });
   }
 
   function resetCanvasState() {
     operations.length = 0;
+    baseSnapshotImage = null;
     latestSequenceId = 0;
     localSequenceId = Date.now();
     isDrawing = false;
     lastPoint = null;
     onlineCountEl.textContent = '0';
     userIdEl.textContent = currentUserId || '-';
+    clearRemoteCursors();
     updateSequenceStatus();
     updateUndoButton();
-    clearCanvas();
+    clearRenderTarget(offscreenCtx);
+    schedulePresent();
   }
 
   function getCanvasPoint(event) {
@@ -91,88 +121,62 @@
     };
   }
 
-  function drawLine(fromPoint, toPoint) {
-    const action = getActiveTool() === 'eraser' ? 'erase' : 'stroke';
-    const style = getDrawStyle(action, colorPicker.value, strokeWidth.value);
-
-    ctx.save();
-    ctx.strokeStyle = style.color;
-    ctx.lineWidth = style.width;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.beginPath();
-    ctx.moveTo(fromPoint.x, fromPoint.y);
-    ctx.lineTo(toPoint.x, toPoint.y);
-    ctx.stroke();
-    ctx.restore();
+  function drawLineOn(targetCtx, fromPoint, toPoint, action, color, width) {
+    const style = getDrawStyle(action, color, width);
+    targetCtx.save();
+    targetCtx.strokeStyle = style.color;
+    targetCtx.lineWidth = style.width;
+    targetCtx.lineCap = 'round';
+    targetCtx.lineJoin = 'round';
+    targetCtx.beginPath();
+    targetCtx.moveTo(fromPoint.x, fromPoint.y);
+    targetCtx.lineTo(toPoint.x, toPoint.y);
+    targetCtx.stroke();
+    targetCtx.restore();
   }
 
-  function drawDot(point) {
-    const action = getActiveTool() === 'eraser' ? 'erase' : 'stroke';
-    const style = getDrawStyle(action, colorPicker.value, strokeWidth.value);
-
-    ctx.save();
-    ctx.fillStyle = style.color;
-    ctx.beginPath();
-    ctx.arc(point.x, point.y, Math.max(style.width / 2, 1), 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
+  function drawDotOn(targetCtx, point, action, color, width) {
+    const style = getDrawStyle(action, color, width);
+    targetCtx.save();
+    targetCtx.fillStyle = style.color;
+    targetCtx.beginPath();
+    targetCtx.arc(point.x, point.y, Math.max(style.width / 2, 1), 0, Math.PI * 2);
+    targetCtx.fill();
+    targetCtx.restore();
   }
 
-  function drawSmoothPoints(points, color, width) {
+  function drawSmoothPoints(targetCtx, points, color, width) {
     if (points.length === 0) return;
 
-    ctx.save();
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
-    ctx.lineWidth = width;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
+    targetCtx.save();
+    targetCtx.strokeStyle = color;
+    targetCtx.fillStyle = color;
+    targetCtx.lineWidth = width;
+    targetCtx.lineCap = 'round';
+    targetCtx.lineJoin = 'round';
 
     if (points.length === 1) {
       const point = points[0];
-      ctx.beginPath();
-      ctx.arc(point.x, point.y, Math.max(width / 2, 1), 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
+      targetCtx.beginPath();
+      targetCtx.arc(point.x, point.y, Math.max(width / 2, 1), 0, Math.PI * 2);
+      targetCtx.fill();
+      targetCtx.restore();
       return;
     }
 
-    ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
+    targetCtx.beginPath();
+    targetCtx.moveTo(points[0].x, points[0].y);
 
     for (let index = 1; index < points.length - 1; index += 1) {
       const current = points[index];
       const next = points[index + 1];
-      ctx.quadraticCurveTo(current.x, current.y, (current.x + next.x) / 2, (current.y + next.y) / 2);
+      targetCtx.quadraticCurveTo(current.x, current.y, (current.x + next.x) / 2, (current.y + next.y) / 2);
     }
 
     const last = points[points.length - 1];
-    ctx.lineTo(last.x, last.y);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  function renderSvgSnapshot(svgData) {
-    // 创建 Image 从 SVG 数据加载
-    const img = new Image();
-    const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(svgBlob);
-    
-    img.onload = function() {
-      // 清除画布并绘制 SVG
-      clearCanvas();
-      ctx.drawImage(img, 0, 0);
-      URL.revokeObjectURL(url);
-      console.log('[SyncCanvas] 快照渲染完成');
-    };
-    
-    img.onerror = function() {
-      console.error('[SyncCanvas] 快照渲染失败');
-      URL.revokeObjectURL(url);
-    };
-    
-    img.src = url;
+    targetCtx.lineTo(last.x, last.y);
+    targetCtx.stroke();
+    targetCtx.restore();
   }
 
   function normalizeOperation(message, options = {}) {
@@ -181,7 +185,7 @@
       : [];
     const action = message.action || message.msg_type || 'stroke';
 
-    const operation = {
+    return {
       action: action === 'erase' ? 'erase' : 'stroke',
       canvas_id: message.canvas_id || currentCanvasId,
       stroke_id: message.stroke_id || crypto.randomUUID(),
@@ -195,24 +199,23 @@
       local_key: options.localKey || null,
       optimistic: Boolean(options.optimistic)
     };
-    
-    return operation;
+  }
+
+  function isDrawableMessage(message) {
+    const action = message.action || message.msg_type || message.type;
+    return action !== 'cursor' && action !== 'clear' && action !== 'undo';
   }
 
   function getOperationKey(operation) {
-    if (Number.isFinite(operation.sequence_id)) {
-      return `seq:${operation.sequence_id}`;
-    }
-
-    return `local:${operation.local_sequence_id}`;
+    return Number.isFinite(operation.sequence_id)
+      ? `seq:${operation.sequence_id}`
+      : `local:${operation.local_sequence_id}`;
   }
 
   function getOperationOrder(operation) {
-    if (Number.isFinite(operation.sequence_id)) {
-      return operation.sequence_id;
-    }
-
-    return operation.local_sequence_id;
+    return Number.isFinite(operation.sequence_id)
+      ? operation.sequence_id
+      : operation.local_sequence_id;
   }
 
   function compareOperations(a, b) {
@@ -244,20 +247,96 @@
 
   function drawOperation(operation) {
     const style = getDrawStyle(operation.action, operation.color, operation.width);
-    drawSmoothPoints(operation.points, style.color, style.width);
+    drawSmoothPoints(offscreenCtx, operation.points, style.color, style.width);
   }
 
   function redrawCanvas() {
-    console.log('[SyncCanvas] redrawCanvas called, operations.length:', operations.length);
-    clearCanvas();
-    
-    console.log('[SyncCanvas] visible operations:', operations.length);
-    
+    clearRenderTarget(offscreenCtx);
+    if (baseSnapshotImage) {
+      offscreenCtx.drawImage(baseSnapshotImage, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+    }
     operations
       .sort(compareOperations)
-      .forEach((operation) => {
-        drawOperation(operation);
-      });
+      .forEach(drawOperation);
+    schedulePresent();
+  }
+
+  function loadSnapshotImage(svgData) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+
+      image.onload = () => {
+        URL.revokeObjectURL(url);
+        resolve(image);
+      };
+      image.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error('快照加载失败'));
+      };
+      image.src = url;
+    });
+  }
+
+  async function replayOperations(rawOperations, source) {
+    const snapshot = rawOperations.find((item) => item && item._snapshot && item.svg_data);
+    if (snapshot) {
+      try {
+        baseSnapshotImage = await loadSnapshotImage(snapshot.svg_data);
+        latestSequenceId = Math.max(latestSequenceId, Number(snapshot.sequence_id) || 0);
+      } catch (error) {
+        console.warn('[SyncCanvas] 快照重放失败，将继续重放增量操作:', error.message);
+      }
+    }
+
+    const normalized = rawOperations
+      .filter((item) => item && !item._snapshot && isDrawableMessage(item))
+      .map((item) => normalizeOperation(item))
+      .filter((operation) => operation.points.length > 0)
+      .sort(compareOperations);
+
+    normalized.forEach(addOperation);
+    redrawCanvas();
+    replayStatus.textContent = `${source}: ${normalized.length} 条`;
+  }
+
+  function extractOperations(payload) {
+    if (Array.isArray(payload)) return payload;
+    if (Array.isArray(payload.operations)) return payload.operations;
+    if (payload.data) {
+      if (Array.isArray(payload.data)) return payload.data;
+      if (Array.isArray(payload.data.operations)) return payload.data.operations;
+    }
+    return [];
+  }
+
+  async function replayHistoryFromApi(canvasId, requestId) {
+    replayStatus.textContent = '加载中';
+    const headers = {};
+    const token = getAuthToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/canvases/${encodeURIComponent(canvasId)}/operations`, { headers });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const payload = await response.json();
+      if (requestId !== replayRequestId) return;
+
+      const history = extractOperations(payload);
+      operations.length = 0;
+      baseSnapshotImage = null;
+      latestSequenceId = 0;
+      await replayOperations(history, 'REST');
+    } catch (error) {
+      if (requestId === replayRequestId) {
+        replayStatus.textContent = '等待 WebSocket 同步';
+        console.warn('[SyncCanvas] REST Replay 失败，等待 WebSocket sync_response 兜底:', error.message);
+      }
+    }
   }
 
   function handleLocalSegment(segment) {
@@ -277,6 +356,7 @@
 
     addOperation(operation);
     redrawCanvas();
+    window.SyncCanvasApp?.markCanvasModified?.(currentCanvasId, operation.timestamp, latestSequenceId);
   }
 
   function handleRemoteOperation(message) {
@@ -284,15 +364,7 @@
       return;
     }
 
-    if (message.is_preview) {
-      const operation = normalizeOperation(message);
-      const lastTwoPoints = operation.points.slice(-2);
-
-      if (lastTwoPoints.length === 2) {
-        drawLine(lastTwoPoints[0], lastTwoPoints[1]);
-      } else if (lastTwoPoints.length === 1) {
-        drawDot(lastTwoPoints[0]);
-      }
+    if (!isDrawableMessage(message)) {
       return;
     }
 
@@ -312,6 +384,72 @@
 
     addOperation(operation);
     redrawCanvas();
+    window.SyncCanvasApp?.markCanvasModified?.(currentCanvasId, operation.timestamp, latestSequenceId);
+  }
+
+  function handleCursorMessage(message) {
+    if (message.canvas_id && message.canvas_id !== currentCanvasId) return;
+    if (message.user_id && message.user_id === currentUserId) return;
+
+    const point = Array.isArray(message.points) ? message.points[0] : message.point;
+    if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+
+    const label = message.username || message.user_name || message.user_id || '协作者';
+    upsertRemoteCursor(message.user_id || message.stroke_id || label, label, point, message.color);
+  }
+
+  function upsertRemoteCursor(id, label, point, color) {
+    let cursor = remoteCursors.get(id);
+    if (!cursor) {
+      const el = document.createElement('div');
+      el.className = 'remote-cursor';
+      el.innerHTML = '<span></span>';
+      cursorLayer.appendChild(el);
+      cursor = { el, timeoutId: null };
+      remoteCursors.set(id, cursor);
+    }
+
+    cursor.el.style.setProperty('--cursor-color', color || colorForId(id));
+    cursor.el.style.transform = `translate(${point.x}px, ${point.y}px)`;
+    cursor.el.querySelector('span').textContent = label;
+    cursor.el.style.opacity = '1';
+
+    clearTimeout(cursor.timeoutId);
+    cursor.timeoutId = setTimeout(() => {
+      cursor.el.style.opacity = '0';
+    }, 1800);
+  }
+
+  function colorForId(id) {
+    const palette = ['#2563eb', '#16a34a', '#dc2626', '#9333ea', '#0891b2', '#ea580c'];
+    let hash = 0;
+    String(id).split('').forEach((char) => {
+      hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+    });
+    return palette[hash % palette.length];
+  }
+
+  function clearRemoteCursors() {
+    remoteCursors.forEach((cursor) => clearTimeout(cursor.timeoutId));
+    remoteCursors.clear();
+    cursorLayer.innerHTML = '';
+  }
+
+  function sendCursor(point) {
+    const now = performance.now();
+    if (!currentCanvasId || now - lastCursorSentAt < 50 || !collector.isConnected()) return;
+
+    lastCursorSentAt = now;
+    const currentUser = window.SyncCanvasApp?.getCurrentUser?.();
+    collector.send({
+      type: 'cursor',
+      action: 'cursor',
+      canvas_id: currentCanvasId,
+      points: [point],
+      color: colorPicker.value,
+      username: currentUser?.username || currentUserId || '我',
+      timestamp: Date.now()
+    });
   }
 
   function handleCollectorMessage(rawData) {
@@ -324,99 +462,44 @@
       return;
     }
 
-    if (message.type === 'welcome') {
+    const messageKind = message.type || message.action || message.msg_type;
+
+    if (messageKind === 'welcome') {
       currentUserId = message.user_id || currentUserId;
       userIdEl.textContent = currentUserId || '-';
       return;
     }
 
-    if (message.type === 'sync_response') {
-      console.log('[SyncCanvas] 收到 sync_response:', {
-        canvas_id: message.canvas_id,
-        operations_count: message.operations?.length || 0,
-        latest_sequence_id: message.latest_sequence_id,
-        total: message.total
-      });
-
-      operations.length = 0;
-
-      if (!Array.isArray(message.operations) || message.operations.length === 0) {
-        console.log('[SyncCanvas] 无历史操作');
-        redrawCanvas();
-        updateSequenceStatus();
-        updateUndoButton();
-        return;
-      }
-
-      // 检查第一个操作是否是快照
-      const firstOp = message.operations[0];
-      if (firstOp._snapshot) {
-        console.log('[SyncCanvas] 使用快照 + 增量加载');
-        
-        // 渲染 SVG 快照
-        renderSvgSnapshot(firstOp.svg_data);
-        latestSequenceId = Number(firstOp.sequence_id) || 0;
-        
-        // 处理增量操作（快照之后的操作）
-        for (let i = 1; i < message.operations.length; i++) {
-          const item = message.operations[i];
-          const operation = normalizeOperation(item);
-          if (operation.points.length > 0) {
-            operations.push(operation);
-          }
-        }
-      } else {
-        // 普通模式：直接加载所有操作
-        for (const item of message.operations) {
-          const operation = normalizeOperation(item);
-          if (operation.points.length > 0) {
-            operations.push(operation);
-          }
-        }
-      }
-
-      console.log('[SyncCanvas] 处理后的 operations:', operations.length);
-
-      operations.sort(compareOperations);
-      latestSequenceId = Math.max(
-        latestSequenceId,
-        operations.reduce((max, operation) => Math.max(max, Number(operation.sequence_id) || 0), 0)
-      );
-      
-      console.log('[SyncCanvas] 排序后 latestSequenceId:', latestSequenceId);
-      
-      redrawCanvas();
-      updateSequenceStatus();
-      updateUndoButton();
-      
-      console.log('[SyncCanvas] 历史加载完成');
+    if (messageKind === 'sync_response') {
+      replayOperations(extractOperations(message), 'WebSocket');
       return;
     }
 
-    // 处理服务器广播的清空画布消息
-    if (message.type === 'clear' || message.action === 'clear' || message.msg_type === 'clear') {
-      console.log(`[SyncCanvas] 收到清空画布广播 from ${message.user_id}`);
+    if (messageKind === 'cursor') {
+      handleCursorMessage(message);
+      return;
+    }
+
+    if (messageKind === 'clear') {
       operations.length = 0;
       latestSequenceId = Number(message.sequence_id) || 0;
       redrawCanvas();
       updateSequenceStatus();
       updateUndoButton();
+      window.SyncCanvasApp?.markCanvasModified?.(currentCanvasId, message.timestamp, latestSequenceId);
       return;
     }
 
-    // 处理服务器广播的撤销笔画消息（从数据库删除后同步到所有客户端）
-    if (message.type === 'undo' || message.action === 'undo' || message.msg_type === 'undo') {
+    if (messageKind === 'undo') {
       const strokeId = message.stroke_id;
       if (strokeId) {
-        console.log(`[SyncCanvas] 收到撤销笔画广播 from ${message.user_id}: ${strokeId}`);
-        // 从本地操作列表中物理删除该笔画
         const index = operations.findIndex((op) => op.stroke_id === strokeId);
-        if (index >= 0) {
-          operations.splice(index, 1);
-        }
+        if (index >= 0) operations.splice(index, 1);
+        latestSequenceId = Math.max(latestSequenceId, Number(message.sequence_id) || 0);
         redrawCanvas();
         updateSequenceStatus();
         updateUndoButton();
+        window.SyncCanvasApp?.markCanvasModified?.(currentCanvasId, message.timestamp, latestSequenceId);
       }
       return;
     }
@@ -437,51 +520,52 @@
     canvas.style.cursor = tool === 'eraser' ? 'cell' : 'crosshair';
   }
 
+  function setColor(color) {
+    colorPicker.value = color;
+    collector.setColor(color);
+    colorSwatches.forEach((swatch) => {
+      swatch.classList.toggle('active', swatch.dataset.color.toLowerCase() === color.toLowerCase());
+    });
+  }
+
   function updateSequenceStatus() {
     sequenceIdEl.textContent = String(latestSequenceId);
   }
 
   function updateUndoButton() {
-    const hasOperations = operations.length > 0;
-    undoBtn.disabled = !hasOperations;
+    undoBtn.disabled = !operations.some((op) => op.user_id === currentUserId);
   }
 
   function undoLastOperation() {
-    // 只获取当前用户自己的笔画（按 sequence_id 排序，取最后一个）
-    const sortedOps = [...operations]
+    const operation = [...operations]
       .filter((op) => op.user_id === currentUserId)
-      .sort(compareOperations);
-    const operation = sortedOps[sortedOps.length - 1];
+      .sort(compareOperations)
+      .pop();
 
-    if (!operation) {
-      console.log('[SyncCanvas] 没有可撤销的笔画（当前用户）');
-      return;
-    }
+    if (!operation) return;
 
-    // 发送撤销消息到服务器（服务器会从数据库删除）
     collector.send({
       type: 'undo',
       canvas_id: currentCanvasId,
       action: 'undo',
-      stroke_id: operation.stroke_id,
+      stroke_id: operation.stroke_id
     });
 
-    // 本地从数组中删除该笔画
     const index = operations.findIndex((op) => op.stroke_id === operation.stroke_id);
-    if (index >= 0) {
-      operations.splice(index, 1);
-    }
-
+    if (index >= 0) operations.splice(index, 1);
     redrawCanvas();
     updateUndoButton();
+    window.SyncCanvasApp?.markCanvasModified?.(currentCanvasId, Date.now(), latestSequenceId);
   }
 
-  function openCanvas(canvasId, canvasName) {
+  async function openCanvas(canvasId, canvasName) {
     if (!canvasId) return;
 
     currentCanvasId = canvasId;
     currentCanvasName = canvasName || canvasId;
     currentCanvasLabel.textContent = currentCanvasName;
+    replayRequestId += 1;
+    const requestId = replayRequestId;
 
     if (collectorStarted) {
       collector.stop();
@@ -493,13 +577,14 @@
     wsStatus.textContent = '连接中';
     wsStatus.className = 'disconnected';
 
-    requestAnimationFrame(() => {
-      resizeCanvas();
-      collector.start({ wsUrl: buildWsUrl(canvasId), canvasId });
-    });
+    resizeCanvas();
+    await replayHistoryFromApi(canvasId, requestId);
+    if (requestId !== replayRequestId) return;
+    collector.start({ wsUrl: buildWsUrl(canvasId), canvasId });
   }
 
   function disconnectCanvas() {
+    replayRequestId += 1;
     if (collectorStarted) {
       collector.stop();
       collectorStarted = false;
@@ -508,6 +593,7 @@
     currentCanvasId = null;
     currentCanvasName = '';
     currentCanvasLabel.textContent = '未选择画布';
+    replayStatus.textContent = '未开始';
     resetCanvasState();
     wsStatus.textContent = '未连接';
     wsStatus.className = 'disconnected';
@@ -516,9 +602,11 @@
   penBtn.addEventListener('click', () => setActiveTool('pen'));
   eraserBtn.addEventListener('click', () => setActiveTool('eraser'));
 
-  colorPicker.addEventListener('input', (event) => {
-    collector.setColor(event.target.value);
+  colorSwatches.forEach((swatch) => {
+    swatch.addEventListener('click', () => setColor(swatch.dataset.color));
   });
+
+  colorPicker.addEventListener('input', (event) => setColor(event.target.value));
 
   strokeWidth.addEventListener('input', (event) => {
     const width = Number(event.target.value);
@@ -529,44 +617,44 @@
   undoBtn.addEventListener('click', undoLastOperation);
 
   clearBtn.addEventListener('click', () => {
-    if (operations.length === 0) {
-      return; // 画布已空，无需操作
-    }
+    if (operations.length === 0) return;
+    if (!window.confirm('确定要清空画布吗？这会同步清除所有用户的笔画。')) return;
 
-    // 确认清空
-    const confirmed = window.confirm('确定要清空画布吗？这将同步清除所有用户的笔画。');
-    if (!confirmed) {
-      return;
-    }
-
-    // 发送清空消息到服务器
     collector.send({
       type: 'clear',
       canvas_id: currentCanvasId,
-      action: 'clear',
+      action: 'clear'
     });
 
-    // 本地清空
     operations.length = 0;
     latestSequenceId = 0;
     redrawCanvas();
     updateSequenceStatus();
     updateUndoButton();
+    window.SyncCanvasApp?.markCanvasModified?.(currentCanvasId, Date.now(), latestSequenceId);
   });
 
   canvas.addEventListener('mousedown', (event) => {
     if (!currentCanvasId) return;
+    const action = getActiveTool() === 'eraser' ? 'erase' : 'stroke';
     isDrawing = true;
     lastPoint = getCanvasPoint(event);
-    drawDot(lastPoint);
+    drawDotOn(offscreenCtx, lastPoint, action, colorPicker.value, strokeWidth.value);
+    schedulePresent();
+    sendCursor(lastPoint);
   });
 
   canvas.addEventListener('mousemove', (event) => {
+    if (!currentCanvasId) return;
+    const point = getCanvasPoint(event);
+    sendCursor(point);
+
     if (!isDrawing || !lastPoint) return;
 
-    const point = getCanvasPoint(event);
-    drawLine(lastPoint, point);
+    const action = getActiveTool() === 'eraser' ? 'erase' : 'stroke';
+    drawLineOn(offscreenCtx, lastPoint, point, action, colorPicker.value, strokeWidth.value);
     lastPoint = point;
+    schedulePresent();
   });
 
   canvas.addEventListener('mouseup', () => {
@@ -598,7 +686,7 @@
 
   resizeCanvas();
   setActiveTool('pen');
-  collector.setColor(colorPicker.value);
+  setColor(colorPicker.value);
   collector.setWidth(Number(strokeWidth.value));
   updateSequenceStatus();
   updateUndoButton();

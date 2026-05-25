@@ -1,28 +1,22 @@
 (function () {
-  // 检测当前环境，自动选择 API 地址
-  const isLocalhost = window.location.hostname === 'localhost' || 
-                      window.location.hostname === '127.0.0.1' ||
-                      window.location.hostname.startsWith('192.168.') ||
-                      window.location.hostname.startsWith('10.') ||
-                      window.location.hostname.startsWith('198.18.');
-  
-  const API_BASE = isLocalhost ? 'http://localhost:3000/api/v1' : window.location.origin + '/api/v1';
-  const WS_BASE = isLocalhost ? 'ws://localhost:3000/ws' : 'ws://' + window.location.host + '/ws';
+  const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname) ||
+    window.location.hostname.startsWith('192.168.') ||
+    window.location.hostname.startsWith('10.') ||
+    window.location.hostname.startsWith('198.18.');
+
+  const API_BASE = isLocalhost ? 'http://localhost:3000/api/v1' : `${window.location.origin}/api/v1`;
   const STORAGE_TOKEN = 'synccanvas.token';
   const STORAGE_USER = 'synccanvas.user';
-
-  // ==================== DOM 元素 ====================
+  const STORAGE_META = 'synccanvas.canvasMeta';
 
   const loginView = document.getElementById('loginView');
   const canvasListView = document.getElementById('canvasListView');
   const drawView = document.getElementById('drawView');
-
   const loginForm = document.getElementById('loginForm');
   const loginName = document.getElementById('loginName');
   const loginPassword = document.getElementById('loginPassword');
   const loginError = document.getElementById('loginError');
   const loginToggle = document.getElementById('loginToggle');
-
   const currentUserName = document.getElementById('currentUserName');
   const logoutBtn = document.getElementById('logoutBtn');
   const newCanvasName = document.getElementById('newCanvasName');
@@ -32,18 +26,27 @@
   const canvasListError = document.getElementById('canvasListError');
   const backToListBtn = document.getElementById('backToListBtn');
 
-  // ==================== 状态 ====================
-
   let token = localStorage.getItem(STORAGE_TOKEN) || null;
   let currentUser = null;
+  let isRegisterMode = false;
+  let latestCanvases = [];
+  let canvasMeta = loadCanvasMeta();
 
-  // ==================== API 工具函数 ====================
+  function loadCanvasMeta() {
+    try {
+      return JSON.parse(localStorage.getItem(STORAGE_META)) || {};
+    } catch {
+      return {};
+    }
+  }
+
+  function saveCanvasMeta() {
+    localStorage.setItem(STORAGE_META, JSON.stringify(canvasMeta));
+  }
 
   function getHeaders() {
     const headers = { 'Content-Type': 'application/json' };
-    if (token) {
-      headers['Authorization'] = 'Bearer ' + token;
-    }
+    if (token) headers.Authorization = `Bearer ${token}`;
     return headers;
   }
 
@@ -53,22 +56,19 @@
       headers: getHeaders()
     };
 
-    if (body && (method === 'POST' || method === 'PUT' || method === 'DELETE')) {
+    if (body && method !== 'GET') {
       options.body = JSON.stringify(body);
     }
 
     const response = await fetch(API_BASE + path, options);
-    const data = await response.json();
+    const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
-      const message = data.error?.message || '请求失败';
-      throw new Error(message);
+      throw new Error(data.error?.message || data.message || `HTTP ${response.status}`);
     }
 
     return data;
   }
-
-  // ==================== 视图切换 ====================
 
   function showOnly(view) {
     loginView.classList.toggle('is-hidden', view !== 'login');
@@ -77,33 +77,29 @@
   }
 
   function showLoginError(message) {
-    const el = document.getElementById('loginError');
-    if (el) {
-      el.textContent = message;
-      el.style.display = 'block';
-    } else {
-      alert(message);
-    }
+    loginError.textContent = message;
+    loginError.hidden = false;
   }
 
   function clearLoginError() {
-    const el = document.getElementById('loginError');
-    if (el) {
-      el.textContent = '';
-      el.style.display = 'none';
-    }
+    loginError.textContent = '';
+    loginError.hidden = true;
   }
 
-  function updateLoginDesc(text) {
-    const el = document.getElementById('loginDesc');
-    if (el) el.textContent = text;
+  function showListError(message) {
+    canvasListError.textContent = message;
+    canvasListError.hidden = false;
   }
 
-  // ==================== 认证 ====================
+  function clearListError() {
+    canvasListError.textContent = '';
+    canvasListError.hidden = true;
+  }
 
   function setAuth(tokenValue, user) {
     token = tokenValue;
     currentUser = user;
+
     if (tokenValue && user) {
       localStorage.setItem(STORAGE_TOKEN, tokenValue);
       localStorage.setItem(STORAGE_USER, JSON.stringify(user));
@@ -116,119 +112,72 @@
   function loadAuth() {
     const savedToken = localStorage.getItem(STORAGE_TOKEN);
     const savedUser = localStorage.getItem(STORAGE_USER);
-    if (savedToken && savedUser) {
-      try {
-        token = savedToken;
-        currentUser = JSON.parse(savedUser);
-        return true;
-      } catch {
-        localStorage.removeItem(STORAGE_TOKEN);
-        localStorage.removeItem(STORAGE_USER);
-      }
+
+    if (!savedToken || !savedUser) return false;
+
+    try {
+      token = savedToken;
+      currentUser = JSON.parse(savedUser);
+      return true;
+    } catch {
+      setAuth(null, null);
+      return false;
     }
-    return false;
   }
 
   function logout() {
     setAuth(null, null);
     window.SyncCanvasDraw.disconnectCanvas();
-    showOnly('login');
     loginName.value = '';
     loginPassword.value = '';
     clearLoginError();
+    showOnly('login');
   }
-
-  // ==================== 登录/注册表单切换 ====================
-
-  let isRegisterMode = false;
 
   function toggleLoginMode() {
     isRegisterMode = !isRegisterMode;
-    const form = document.getElementById('loginForm');
-    if (!form) return;
-
-    const title = form.querySelector('h1');
-    const submitBtn = form.querySelector('button[type="submit"]');
-    const toggleBtn = document.getElementById('loginToggle');
-    const passwordLabel = form.querySelector('label[for="loginPassword"]');
-    const passwordInput = document.getElementById('loginPassword');
-
-    if (title) {
-      title.textContent = isRegisterMode ? '注册 SyncCanvas' : 'SyncCanvas';
-    }
-    if (submitBtn) {
-      submitBtn.textContent = isRegisterMode ? '注册' : '登录';
-    }
-    if (toggleBtn) {
-      toggleBtn.textContent = isRegisterMode ? '已有账号？登录' : '没有账号？注册';
-    }
-    if (passwordLabel) {
-      passwordLabel.style.display = 'block';
-    }
-    if (passwordInput) {
-      passwordInput.style.display = 'block';
-      if (isRegisterMode) {
-        passwordInput.required = true;
-        passwordInput.placeholder = '输入密码（6位以上）';
-      } else {
-        passwordInput.required = true;
-        passwordInput.placeholder = '输入密码';
-      }
-    }
-    updateLoginDesc(isRegisterMode
+    loginForm.querySelector('h1').textContent = isRegisterMode ? '注册 SyncCanvas' : 'SyncCanvas';
+    loginForm.querySelector('button[type="submit"]').textContent = isRegisterMode ? '注册' : '登录';
+    loginToggle.textContent = isRegisterMode ? '已有账号？登录' : '没有账号？注册';
+    document.getElementById('loginDesc').textContent = isRegisterMode
       ? '注册后可以创建和管理自己的画布。'
-      : '登录后选择或创建一个协作画布。');
+      : '登录后选择或创建一个协作画布。';
+    loginPassword.placeholder = isRegisterMode ? '输入密码（6 位以上）' : '输入密码';
     clearLoginError();
   }
-
-  // ==================== 认证请求 ====================
 
   async function handleAuth(event) {
     event.preventDefault();
     clearLoginError();
 
     const username = loginName.value.trim();
-    const password = loginPassword ? loginPassword.value : '';
+    const password = loginPassword.value;
 
     if (!username) {
       showLoginError('请输入用户名');
       return;
     }
 
-    if (isRegisterMode && (!password || password.length < 6)) {
-      showLoginError('密码至少需要 6 个字符');
-      return;
-    }
-
-    if (!isRegisterMode && !password) {
-      showLoginError('请输入密码');
+    if (!password || password.length < (isRegisterMode ? 6 : 1)) {
+      showLoginError(isRegisterMode ? '密码至少需要 6 个字符' : '请输入密码');
       return;
     }
 
     try {
       if (isRegisterMode) {
-        const data = await apiRequest('POST', '/auth/register', { username, password });
-        // 注册后自动登录获取 token
-        const loginData = await apiRequest('POST', '/auth/login', { username, password });
-        setAuth(loginData.data.token, {
-          user_id: loginData.data.user_id,
-          username: loginData.data.username
-        });
-        showCanvasList();
-      } else {
-        const data = await apiRequest('POST', '/auth/login', { username, password });
-        setAuth(data.data.token, {
-          user_id: data.data.user_id,
-          username: data.data.username
-        });
-        showCanvasList();
+        await apiRequest('POST', '/auth/register', { username, password });
       }
-    } catch (err) {
-      showLoginError(err.message);
+
+      const data = await apiRequest('POST', '/auth/login', { username, password });
+      setAuth(data.data.token, {
+        user_id: data.data.user_id,
+        username: data.data.username
+      });
+      await showCanvasList();
+    } catch (error) {
+      showLoginError(error.message);
     }
   }
-
-  // ==================== 画布列表 ====================
 
   async function showCanvasList() {
     if (!token) {
@@ -239,97 +188,135 @@
     showOnly('list');
     currentUserName.textContent = currentUser?.username || '-';
     canvasItems.innerHTML = '';
-    canvasListError.style.display = 'none';
-    canvasListLoading.style.display = 'block';
+    clearListError();
+    canvasListLoading.hidden = false;
 
     try {
       const data = await apiRequest('GET', '/canvases');
-      renderCanvasList(data.data.canvases || []);
-    } catch (err) {
-      canvasListError.textContent = '加载画布列表失败: ' + err.message;
-      canvasListError.style.display = 'block';
-      if (err.message.includes('令牌') || err.message.includes('认证')) {
+      latestCanvases = data.data?.canvases || [];
+      renderCanvasList(latestCanvases);
+    } catch (error) {
+      showListError(`加载画布列表失败: ${error.message}`);
+      if (/401|认证|令牌|token/i.test(error.message)) {
         logout();
       }
     } finally {
-      canvasListLoading.style.display = 'none';
+      canvasListLoading.hidden = true;
     }
+  }
+
+  function getCanvasId(canvas) {
+    return canvas.canvas_id || canvas.id;
+  }
+
+  function getCreatedAt(canvas) {
+    return canvas.created_at || canvas.createdAt || canvas.created_time;
+  }
+
+  function getUpdatedAt(canvas) {
+    const id = getCanvasId(canvas);
+    const localMeta = canvasMeta[id] || {};
+    return canvas.updated_at ||
+      canvas.updatedAt ||
+      canvas.last_modified_at ||
+      canvas.lastModifiedAt ||
+      canvas.last_operation_at ||
+      localMeta.lastModifiedAt ||
+      getCreatedAt(canvas);
+  }
+
+  function formatDate(value) {
+    if (!value) return '-';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '-';
+    return date.toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
   }
 
   function renderCanvasList(canvases) {
     canvasItems.innerHTML = '';
 
     if (canvases.length === 0) {
-      canvasItems.innerHTML = '<p style="color:#64748b;text-align:center;padding:20px;">还没有画布，创建一个开始吧！</p>';
+      const empty = document.createElement('p');
+      empty.className = 'empty-state';
+      empty.textContent = '还没有画布，创建一个开始吧。';
+      canvasItems.appendChild(empty);
       return;
     }
 
-    canvases.forEach(function (canvas) {
-      const item = document.createElement('div');
-      item.className = 'canvas-item';
+    canvases
+      .slice()
+      .sort((a, b) => new Date(getUpdatedAt(b)).getTime() - new Date(getUpdatedAt(a)).getTime())
+      .forEach((canvas) => {
+        const canvasId = getCanvasId(canvas);
+        const isOwner = currentUser && canvas.owner_id === currentUser.user_id;
+        const localMeta = canvasMeta[canvasId] || {};
+        const operationCount = canvas.total_operations ?? canvas.operation_count ?? localMeta.operationCount;
+        const latestSeq = canvas.latest_sequence_id ?? canvas.latestSequenceId ?? localMeta.latestSequenceId;
 
-      const dateStr = new Date(canvas.created_at).toLocaleString('zh-CN', {
-        year: 'numeric', month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit'
+        const item = document.createElement('div');
+        item.className = 'canvas-item';
+        item.innerHTML = `
+          <div class="canvas-info">
+            <strong class="canvas-name"></strong>
+            <div class="canvas-meta-grid">
+              <span class="canvas-meta canvas-id"></span>
+              <span class="canvas-meta canvas-created"></span>
+              <span class="canvas-meta canvas-updated"></span>
+              <span class="canvas-meta canvas-extra"></span>
+            </div>
+          </div>
+          <div class="canvas-actions">
+            <button class="canvas-enter-btn" type="button">进入</button>
+            ${isOwner ? '<button class="canvas-delete-btn" type="button">删除</button>' : ''}
+          </div>
+        `;
+
+        item.querySelector('.canvas-name').textContent = canvas.name || canvasId;
+        item.querySelector('.canvas-id').textContent = `ID: ${canvasId}`;
+        item.querySelector('.canvas-created').textContent = `创建: ${formatDate(getCreatedAt(canvas))}`;
+        item.querySelector('.canvas-updated').textContent = `最后修改: ${formatDate(getUpdatedAt(canvas))}`;
+        item.querySelector('.canvas-extra').textContent = [
+          isOwner ? '我创建的' : '协作画布',
+          operationCount != null ? `${operationCount} 次操作` : null,
+          latestSeq != null ? `序列 ${latestSeq}` : null
+        ].filter(Boolean).join(' · ');
+
+        item.querySelector('.canvas-enter-btn').addEventListener('click', () => enterCanvas(canvas));
+
+        const deleteBtn = item.querySelector('.canvas-delete-btn');
+        if (deleteBtn) {
+          deleteBtn.addEventListener('click', () => handleDeleteCanvas(canvas, item));
+        }
+
+        canvasItems.appendChild(item);
       });
-
-      const isOwner = currentUser && canvas.owner_id === currentUser.user_id;
-
-      item.innerHTML =
-        '<div class="canvas-info">' +
-          '<strong class="canvas-name"></strong>' +
-          '<span class="canvas-meta"></span>' +
-        '</div>' +
-        '<div class="canvas-actions">' +
-          '<button class="canvas-enter-btn" type="button">进入</button>' +
-          (isOwner ? '<button class="canvas-delete-btn danger" type="button" title="删除画布">删除</button>' : '') +
-        '</div>';
-
-      item.querySelector('.canvas-name').textContent = canvas.name;
-      item.querySelector('.canvas-meta').textContent =
-        'ID: ' + canvas.canvas_id + ' · ' + dateStr +
-        (isOwner ? ' · 我创建的' : '');
-
-      const enterBtn = item.querySelector('.canvas-enter-btn');
-      enterBtn.addEventListener('click', function () {
-        enterCanvas(canvas);
-      });
-
-      const deleteBtn = item.querySelector('.canvas-delete-btn');
-      if (deleteBtn) {
-        deleteBtn.addEventListener('click', function (e) {
-          e.stopPropagation();
-          handleDeleteCanvas(canvas, item);
-        });
-      }
-
-      canvasItems.appendChild(item);
-    });
   }
 
   async function handleDeleteCanvas(canvas, itemElement) {
-    if (!confirm('确定要删除画布 "' + canvas.name + '" 吗？此操作不可恢复。')) {
-      return;
-    }
+    const canvasId = getCanvasId(canvas);
+    if (!window.confirm(`确定要删除画布 "${canvas.name}" 吗？此操作不可恢复。`)) return;
 
     itemElement.style.opacity = '0.5';
     itemElement.style.pointerEvents = 'none';
 
     try {
-      await apiRequest('DELETE', '/canvases/' + encodeURIComponent(canvas.canvas_id));
-      itemElement.remove();
-
-      if (canvasItems.children.length === 0) {
-        canvasItems.innerHTML = '<p style="color:#64748b;text-align:center;padding:20px;">还没有画布，创建一个开始吧！</p>';
-      }
-    } catch (err) {
+      await apiRequest('DELETE', `/canvases/${encodeURIComponent(canvasId)}`);
+      delete canvasMeta[canvasId];
+      saveCanvasMeta();
+      latestCanvases = latestCanvases.filter((item) => getCanvasId(item) !== canvasId);
+      renderCanvasList(latestCanvases);
+    } catch (error) {
       itemElement.style.opacity = '1';
       itemElement.style.pointerEvents = 'auto';
-      alert('删除失败: ' + err.message);
+      window.alert(`删除失败: ${error.message}`);
     }
   }
-
-  // ==================== 创建画布 ====================
 
   async function handleCreateCanvas() {
     const name = newCanvasName.value.trim();
@@ -339,72 +326,68 @@
     try {
       const data = await apiRequest('POST', '/canvases', { name: name || undefined });
       const canvas = data.data;
+      if (canvas?.canvas_id) {
+        canvasMeta[canvas.canvas_id] = {
+          lastModifiedAt: canvas.created_at || new Date().toISOString(),
+          latestSequenceId: 0,
+          operationCount: 0
+        };
+        saveCanvasMeta();
+      }
       newCanvasName.value = '';
-      showCanvasList();
-    } catch (err) {
-      alert('创建画布失败: ' + err.message);
+      await showCanvasList();
+    } catch (error) {
+      window.alert(`创建画布失败: ${error.message}`);
     } finally {
       createCanvasBtn.disabled = false;
       createCanvasBtn.textContent = '创建新画布';
     }
   }
 
-  // ==================== 进入画布 ====================
-
   function enterCanvas(canvas) {
     showOnly('draw');
-    window.SyncCanvasDraw.openCanvas(canvas.canvas_id, canvas.name);
+    window.SyncCanvasDraw.openCanvas(getCanvasId(canvas), canvas.name || getCanvasId(canvas));
   }
 
-  // ==================== 事件绑定 ====================
-
-  if (loginForm) {
-    loginForm.addEventListener('submit', handleAuth);
+  function markCanvasModified(canvasId, timestamp, latestSequenceId) {
+    if (!canvasId) return;
+    const current = canvasMeta[canvasId] || {};
+    canvasMeta[canvasId] = {
+      lastModifiedAt: timestamp || Date.now(),
+      latestSequenceId: latestSequenceId ?? current.latestSequenceId,
+      operationCount: Number(current.operationCount || 0) + 1
+    };
+    saveCanvasMeta();
   }
 
-  if (loginToggle) {
-    loginToggle.addEventListener('click', toggleLoginMode);
-  }
+  loginForm.addEventListener('submit', handleAuth);
+  loginToggle.addEventListener('click', toggleLoginMode);
+  createCanvasBtn.addEventListener('click', handleCreateCanvas);
+  newCanvasName.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      handleCreateCanvas();
+    }
+  });
+  backToListBtn.addEventListener('click', () => {
+    window.SyncCanvasDraw.disconnectCanvas();
+    showCanvasList();
+  });
+  logoutBtn.addEventListener('click', logout);
 
-  if (createCanvasBtn) {
-    createCanvasBtn.addEventListener('click', handleCreateCanvas);
-  }
-
-  if (newCanvasName) {
-    newCanvasName.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') {
-        handleCreateCanvas();
-      }
-    });
-  }
-
-  if (backToListBtn) {
-    backToListBtn.addEventListener('click', function () {
-      window.SyncCanvasDraw.disconnectCanvas();
-      showCanvasList();
-    });
-  }
-
-  if (logoutBtn) {
-    logoutBtn.addEventListener('click', logout);
-  }
-
-  // ==================== 初始化 ====================
-
-  // 如果有保存的 token，显示画布列表
   if (loadAuth() && token) {
     showCanvasList();
   } else {
     showOnly('login');
   }
 
-  // 暴露给全局
   window.SyncCanvasApp = {
-    logout: logout,
-    showCanvasList: showCanvasList,
+    logout,
+    showCanvasList,
     refreshCanvases: showCanvasList,
-    getToken: function () { return token; },
-    getCurrentUser: function () { return currentUser; },
-    isLoggedIn: function () { return !!token; }
+    apiRequest,
+    markCanvasModified,
+    getToken: () => token,
+    getCurrentUser: () => currentUser,
+    isLoggedIn: () => Boolean(token)
   };
 }());
