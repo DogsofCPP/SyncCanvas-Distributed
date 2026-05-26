@@ -50,7 +50,11 @@
   let activeConnectionToken = 0;
 
   function buildWsUrl(canvasId) {
-    return `${wsBaseUrl}?canvas_id=${encodeURIComponent(canvasId)}`;
+    const token = getAuthToken();
+    if (!token) {
+      throw new Error('未登录：缺少 token，无法建立 WebSocket 连接');
+    }
+    return `${wsBaseUrl}?canvas_id=${encodeURIComponent(canvasId)}&token=${encodeURIComponent(token)}`;
   }
 
   function getAuthToken() {
@@ -650,6 +654,29 @@
         return;
       }
       replayOperations(extractOperations(message), 'WebSocket');
+      return;
+    }
+
+    if (messageKind === 'presence_update') {
+      if (message.canvas_id && message.canvas_id !== currentCanvasId) return;
+      const list = Array.isArray(message.online_users) ? message.online_users : [];
+      onlineUsers.clear();
+      list.forEach((user) => {
+        if (!user) return;
+        const userId = user.user_id || user.username;
+        if (!userId || userId === currentUserId) return;
+        onlineUsers.set(userId, {
+          userId,
+          username: user.username || userId,
+          color: userColor(userId),
+          lastSeenAt: Date.now()
+        });
+      });
+      const count = Number.isFinite(message.online_count)
+        ? message.online_count
+        : (list.length + 1);
+      onlineCountEl.textContent = String(count);
+      renderOnlineUsers();
       return;
     }
 

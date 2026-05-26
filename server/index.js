@@ -163,6 +163,32 @@ const wss = new WebSocket.Server({ server: httpServer, path: WS_PATH });
 // 在线用户映射: userId -> { ws, canvasId, username }
 const clients = new Map();
 
+function getCanvasOnlineUsers(canvasId) {
+  const room = canvasRooms.get(canvasId);
+  if (!room) return [];
+  return Array.from(room)
+    .map((userId) => {
+      const info = clients.get(userId);
+      return {
+        user_id: userId,
+        username: info?.username || userId
+      };
+    })
+    .filter((item) => item.user_id);
+}
+
+function broadcastPresenceUpdate(canvasId) {
+  if (!canvasId) return;
+  const onlineUsers = getCanvasOnlineUsers(canvasId);
+  const payload = {
+    type: 'presence_update',
+    canvas_id: canvasId,
+    online_count: onlineUsers.length,
+    online_users: onlineUsers
+  };
+  broadcastToCanvas(canvasId, payload);
+}
+
 // canvasId -> Set of userIds (用于按画布隔离广播)
 const canvasRooms = new Map();
 
@@ -184,6 +210,11 @@ function parseCanvasId(request) {
   return parsed.query.canvas_id || null;
 }
 
+function parseWsToken(request) {
+  const parsed = url.parse(request.url, true);
+  return parsed.query.token || null;
+}
+
 /**
  * 加入画布房间
  */
@@ -196,6 +227,7 @@ function joinCanvasRoom(userId, canvasId) {
   canvasRooms.get(canvasId).add(userId);
 
   console.log(`[Room] ${userId} 加入画布 ${canvasId} (房间人数: ${canvasRooms.get(canvasId).size})`);
+  broadcastPresenceUpdate(canvasId);
 }
 
 /**
@@ -205,17 +237,21 @@ async function leaveCanvasRoom(userId, canvasId) {
   if (!canvasId) return;
 
   const room = canvasRooms.get(canvasId);
+  let roomRemoved = false;
   if (room) {
     room.delete(userId);
     if (room.size === 0) {
       canvasRooms.delete(canvasId);
+      roomRemoved = true;
       await cleanupCanvasRoom(canvasId);
     }
   }
 
-  const clientInfo = clients.get(userId);
   const roomSize = canvasRooms.get(canvasId)?.size || 0;
   console.log(`[Room] ${userId} 离开画布 ${canvasId} (房间人数: ${roomSize})`);
+  if (!roomRemoved) {
+    broadcastPresenceUpdate(canvasId);
+  }
 }
 
 /**
@@ -602,8 +638,21 @@ async function handleClientMessage(userId, canvasId, data) {
  */
 wss.on('connection', async (ws, req) => {
   const canvasId = parseCanvasId(req);
-  const userId = generateUserId();
-  const clientInfo = { ws, canvasId, userId };
+  const token = parseWsToken(req);
+  const decoded = token ? require('./middleware/auth').verifyToken(token) : null;
+
+  if (!decoded || !decoded.username) {
+    ws.send(JSON.stringify({
+      type: 'error',
+      code: 1001,
+      message: '需要登录：token 缺失或无效'
+    }));
+    ws.close();
+    return;
+  }
+
+  const userId = decoded.username;
+  const clientInfo = { ws, canvasId, userId, username: decoded.username };
   clients.set(userId, clientInfo);
 
   console.log(`[+] 用户连接: ${userId}, canvas=${canvasId || '(无)'}, 当前在线: ${clients.size}`);
@@ -611,6 +660,7 @@ wss.on('connection', async (ws, req) => {
   ws.send(JSON.stringify({
     type: 'welcome',
     user_id: userId,
+    username: decoded.username,
     canvas_id: canvasId,
     message: '连接成功'
   }));
@@ -619,6 +669,14 @@ wss.on('connection', async (ws, req) => {
     await joinCanvasRoom(userId, canvasId);
 
     await subscribeCanvas(canvasId);
+
+    // 立即下发当前在线用户列表/人数
+    ws.send(JSON.stringify({
+      type: 'presence_update',
+      canvas_id: canvasId,
+      online_count: getCanvasOnlineUsers(canvasId).length,
+      online_users: getCanvasOnlineUsers(canvasId)
+    }));
 
     const history = await loadCanvasHistory(canvasId);
     if (history.length > 0) {
@@ -672,9 +730,10 @@ wss.on('connection', async (ws, req) => {
   });
 
   ws.on('close', async () => {
-    await leaveCanvasRoom(userId, canvasId);
+    const currentCanvasId = clientInfo.canvasId || canvasId;
+    await leaveCanvasRoom(userId, currentCanvasId);
     clients.delete(userId);
-    console.log(`[-] 用户断开: ${userId}, canvas=${canvasId}, 当前在线: ${clients.size}`);
+    console.log(`[-] 用户断开: ${userId}, canvas=${currentCanvasId}, 当前在线: ${clients.size}`);
   });
 
   ws.on('error', (err) => {
