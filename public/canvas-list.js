@@ -351,7 +351,11 @@
       `;
       item.querySelector('strong').textContent = canvas.name || canvasId;
       item.querySelector('span').textContent = `最后修改 ${formatDate(getUpdatedAt(canvas))}`;
-      item.addEventListener('click', () => enterCanvas(canvas));
+      item.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        enterCanvas(canvas);
+      });
       drawCanvasItems.appendChild(item);
     });
   }

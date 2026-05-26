@@ -47,6 +47,7 @@
   let baseSnapshotImage = null;
   let presenceTimerId = null;
   let onlinePruneTimerId = null;
+  let activeConnectionToken = 0;
 
   function buildWsUrl(canvasId) {
     return `${wsBaseUrl}?canvas_id=${encodeURIComponent(canvasId)}`;
@@ -604,6 +605,27 @@
     }
   }
 
+  function protectSidebarInteractions() {
+    const blockedEvents = [
+      'mousedown',
+      'mousemove',
+      'mouseup',
+      'mouseleave',
+      'touchstart',
+      'touchmove',
+      'touchend',
+      'touchcancel'
+    ];
+
+    document.querySelectorAll('.draw-sidebar').forEach((sidebar) => {
+      blockedEvents.forEach((eventName) => {
+        sidebar.addEventListener(eventName, (event) => {
+          event.stopPropagation();
+        }, { capture: true });
+      });
+    });
+  }
+
   function handleCollectorMessage(rawData) {
     let message;
 
@@ -624,6 +646,9 @@
     }
 
     if (messageKind === 'sync_response') {
+      if (message.canvas_id && message.canvas_id !== currentCanvasId) {
+        return;
+      }
       replayOperations(extractOperations(message), 'WebSocket');
       return;
     }
@@ -723,6 +748,9 @@
 
   async function openCanvas(canvasId, canvasName) {
     if (!canvasId) return;
+    if (canvasId === currentCanvasId && collector.isConnected()) {
+      return;
+    }
 
     if (currentCanvasId && currentCanvasId !== canvasId) {
       sendPresence('leave');
@@ -732,12 +760,19 @@
     currentCanvasName = canvasName || canvasId;
     currentCanvasLabel.textContent = currentCanvasName;
     replayRequestId += 1;
+    activeConnectionToken += 1;
     const requestId = replayRequestId;
+    const connectionToken = activeConnectionToken;
 
-    if (collectorStarted) {
-      collector.stop();
-    } else {
+    stopPresenceTimers();
+    if (!collectorStarted) {
       collectorStarted = true;
+      collector.start({
+        flushInterval: 50,
+        toolbarSelector: '#toolbar, .draw-sidebar'
+      });
+    } else {
+      collector.disconnect();
     }
 
     resetCanvasState();
@@ -749,18 +784,19 @@
 
     resizeCanvas();
     await replayHistoryFromApi(canvasId, requestId);
-    if (requestId !== replayRequestId) return;
-    collector.start({ wsUrl: buildWsUrl(canvasId), canvasId });
+    if (requestId !== replayRequestId || connectionToken !== activeConnectionToken) return;
+    collector.connect(buildWsUrl(canvasId));
     startPresenceTimers();
   }
 
   function disconnectCanvas() {
     sendPresence('leave');
     replayRequestId += 1;
+    activeConnectionToken += 1;
     stopPresenceTimers();
 
     if (collectorStarted) {
-      collector.stop();
+      collector.disconnect();
       collectorStarted = false;
     }
 
@@ -863,6 +899,7 @@
   window.addEventListener('resize', resizeCanvas);
 
   resizeCanvas();
+  protectSidebarInteractions();
   renderOnlineUsers();
   setActiveTool('pen');
   setColor(colorPicker.value);
