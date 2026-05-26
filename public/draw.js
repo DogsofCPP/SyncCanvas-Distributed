@@ -13,6 +13,8 @@
   const replayStatus = document.getElementById('replayStatus');
   const userIdEl = document.getElementById('userId');
   const onlineCountEl = document.getElementById('onlineCount');
+  const sideOnlineCount = document.getElementById('sideOnlineCount');
+  const onlineUserItems = document.getElementById('onlineUserItems');
   const sequenceIdEl = document.getElementById('sequenceId');
   const currentCanvasLabel = document.getElementById('currentCanvasLabel');
   const cursorLayer = document.getElementById('cursorLayer');
@@ -27,6 +29,7 @@
   const backgroundColor = '#ffffff';
   const operations = [];
   const remoteCursors = new Map();
+  const onlineUsers = new Map();
   const offscreenCanvas = document.createElement('canvas');
   const offscreenCtx = offscreenCanvas.getContext('2d');
 
@@ -42,20 +45,25 @@
   let replayRequestId = 0;
   let lastCursorSentAt = 0;
   let baseSnapshotImage = null;
+  let presenceTimerId = null;
+  let onlinePruneTimerId = null;
 
   function buildWsUrl(canvasId) {
     return `${wsBaseUrl}?canvas_id=${encodeURIComponent(canvasId)}`;
   }
 
   function getAuthToken() {
-    return window.SyncCanvasApp && window.SyncCanvasApp.getToken
-      ? window.SyncCanvasApp.getToken()
-      : localStorage.getItem('synccanvas.token');
+    return window.SyncCanvasApp?.getToken?.() || localStorage.getItem('synccanvas.token');
+  }
+
+  function getCurrentUserName() {
+    return window.SyncCanvasApp?.getCurrentUser?.()?.username || currentUserId || '我';
   }
 
   function resizeCanvas() {
-    const width = window.innerWidth;
-    const height = window.innerHeight;
+    const rect = canvas.getBoundingClientRect();
+    const width = Math.max(Math.floor(rect.width), 1);
+    const height = Math.max(Math.floor(rect.height), 1);
     canvas.width = width;
     canvas.height = height;
     offscreenCanvas.width = width;
@@ -89,6 +97,7 @@
     onlineCountEl.textContent = '0';
     userIdEl.textContent = currentUserId || '-';
     clearRemoteCursors();
+    clearOnlineUsers();
     updateSequenceStatus();
     updateUndoButton();
     clearRenderTarget(offscreenCtx);
@@ -100,6 +109,29 @@
     return {
       x: event.clientX - rect.left,
       y: event.clientY - rect.top
+    };
+  }
+
+  function viewportPointToCanvasPoint(point) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / Math.max(rect.width, 1);
+    const scaleY = canvas.height / Math.max(rect.height, 1);
+
+    return {
+      ...point,
+      x: (point.x - rect.left) * scaleX,
+      y: (point.y - rect.top) * scaleY
+    };
+  }
+
+  function normalizeLocalSegmentPoints(segment) {
+    if (!Array.isArray(segment.points)) return segment;
+
+    return {
+      ...segment,
+      points: segment.points
+        .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+        .map(viewportPointToCanvasPoint)
     };
   }
 
@@ -201,9 +233,13 @@
     };
   }
 
+  function getMessageKind(message) {
+    return message.type || message.action || message.msg_type;
+  }
+
   function isDrawableMessage(message) {
-    const action = message.action || message.msg_type || message.type;
-    return action !== 'cursor' && action !== 'clear' && action !== 'undo';
+    const kind = getMessageKind(message);
+    return kind !== 'cursor' && kind !== 'presence' && kind !== 'leave' && kind !== 'clear' && kind !== 'undo';
   }
 
   function getOperationKey(operation) {
@@ -340,15 +376,18 @@
   }
 
   function handleLocalSegment(segment) {
+    const localSegment = normalizeLocalSegmentPoints(segment);
+    segment.points = localSegment.points;
     segment.canvas_id = currentCanvasId;
+    localSegment.canvas_id = currentCanvasId;
 
-    if (segment.is_preview) {
+    if (localSegment.is_preview) {
       return;
     }
 
     localSequenceId = Math.max(localSequenceId + 1, latestSequenceId + 1, Date.now());
-    const localKey = `${segment.stroke_id}:${segment.timestamp}:${localSequenceId}`;
-    const operation = normalizeOperation(segment, {
+    const localKey = `${localSegment.stroke_id}:${localSegment.timestamp}:${localSequenceId}`;
+    const operation = normalizeOperation(localSegment, {
       localSequenceId,
       localKey,
       optimistic: true
@@ -387,9 +426,99 @@
     window.SyncCanvasApp?.markCanvasModified?.(currentCanvasId, operation.timestamp, latestSequenceId);
   }
 
+  function userColor(id) {
+    const palette = ['#2563eb', '#16a34a', '#dc2626', '#9333ea', '#0891b2', '#ea580c'];
+    let hash = 0;
+    String(id).split('').forEach((char) => {
+      hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+    });
+    return palette[hash % palette.length];
+  }
+
+  function upsertOnlineUser(message) {
+    const userId = message.user_id || message.client_id || message.stroke_id;
+    if (!userId || userId === currentUserId) return;
+    if (message.canvas_id && message.canvas_id !== currentCanvasId) return;
+
+    const username = message.username || message.user_name || userId;
+    onlineUsers.set(userId, {
+      userId,
+      username,
+      color: message.color || userColor(userId),
+      lastSeenAt: Date.now()
+    });
+    renderOnlineUsers();
+  }
+
+  function removeOnlineUser(message) {
+    const userId = message.user_id || message.client_id;
+    if (!userId || userId === currentUserId) return;
+    onlineUsers.delete(userId);
+    renderOnlineUsers();
+  }
+
+  function renderOnlineUsers() {
+    const users = Array.from(onlineUsers.values())
+      .sort((a, b) => b.lastSeenAt - a.lastSeenAt);
+
+    sideOnlineCount.textContent = String(users.length);
+    onlineUserItems.innerHTML = '';
+
+    if (users.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'sidebar-empty';
+      empty.textContent = '暂无其他在线用户';
+      onlineUserItems.appendChild(empty);
+      return;
+    }
+
+    users.forEach((user) => {
+      const item = document.createElement('div');
+      item.className = 'online-user-card';
+      item.style.setProperty('--user-color', user.color);
+      item.innerHTML = `
+        <span class="user-avatar"></span>
+        <span>
+          <strong></strong>
+          <span></span>
+        </span>
+      `;
+      item.querySelector('.user-avatar').textContent = user.username.slice(0, 1).toUpperCase();
+      item.querySelector('strong').textContent = user.username;
+      item.querySelector('span span').textContent = `最近活跃 ${formatRelativeTime(user.lastSeenAt)}`;
+      onlineUserItems.appendChild(item);
+    });
+  }
+
+  function formatRelativeTime(timestamp) {
+    const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+    if (seconds < 3) return '刚刚';
+    if (seconds < 60) return `${seconds} 秒前`;
+    return `${Math.round(seconds / 60)} 分钟前`;
+  }
+
+  function clearOnlineUsers() {
+    onlineUsers.clear();
+    renderOnlineUsers();
+  }
+
+  function pruneOnlineUsers() {
+    const cutoff = Date.now() - 18000;
+    let changed = false;
+    onlineUsers.forEach((user, userId) => {
+      if (user.lastSeenAt < cutoff) {
+        onlineUsers.delete(userId);
+        changed = true;
+      }
+    });
+    if (changed) renderOnlineUsers();
+  }
+
   function handleCursorMessage(message) {
     if (message.canvas_id && message.canvas_id !== currentCanvasId) return;
     if (message.user_id && message.user_id === currentUserId) return;
+
+    upsertOnlineUser(message);
 
     const point = Array.isArray(message.points) ? message.points[0] : message.point;
     if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
@@ -409,7 +538,7 @@
       remoteCursors.set(id, cursor);
     }
 
-    cursor.el.style.setProperty('--cursor-color', color || colorForId(id));
+    cursor.el.style.setProperty('--cursor-color', color || userColor(id));
     cursor.el.style.transform = `translate(${point.x}px, ${point.y}px)`;
     cursor.el.querySelector('span').textContent = label;
     cursor.el.style.opacity = '1';
@@ -420,19 +549,23 @@
     }, 1800);
   }
 
-  function colorForId(id) {
-    const palette = ['#2563eb', '#16a34a', '#dc2626', '#9333ea', '#0891b2', '#ea580c'];
-    let hash = 0;
-    String(id).split('').forEach((char) => {
-      hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-    });
-    return palette[hash % palette.length];
-  }
-
   function clearRemoteCursors() {
     remoteCursors.forEach((cursor) => clearTimeout(cursor.timeoutId));
     remoteCursors.clear();
     cursorLayer.innerHTML = '';
+  }
+
+  function sendPresence(type = 'presence') {
+    if (!currentCanvasId || !collector.isConnected()) return;
+    collector.send({
+      type,
+      action: type,
+      canvas_id: currentCanvasId,
+      points: [],
+      color: colorPicker.value,
+      username: getCurrentUserName(),
+      timestamp: Date.now()
+    });
   }
 
   function sendCursor(point) {
@@ -440,16 +573,35 @@
     if (!currentCanvasId || now - lastCursorSentAt < 50 || !collector.isConnected()) return;
 
     lastCursorSentAt = now;
-    const currentUser = window.SyncCanvasApp?.getCurrentUser?.();
     collector.send({
       type: 'cursor',
       action: 'cursor',
       canvas_id: currentCanvasId,
       points: [point],
       color: colorPicker.value,
-      username: currentUser?.username || currentUserId || '我',
+      username: getCurrentUserName(),
       timestamp: Date.now()
     });
+  }
+
+  function startPresenceTimers() {
+    stopPresenceTimers();
+    presenceTimerId = setInterval(() => sendPresence('presence'), 5000);
+    onlinePruneTimerId = setInterval(() => {
+      pruneOnlineUsers();
+      renderOnlineUsers();
+    }, 5000);
+  }
+
+  function stopPresenceTimers() {
+    if (presenceTimerId) {
+      clearInterval(presenceTimerId);
+      presenceTimerId = null;
+    }
+    if (onlinePruneTimerId) {
+      clearInterval(onlinePruneTimerId);
+      onlinePruneTimerId = null;
+    }
   }
 
   function handleCollectorMessage(rawData) {
@@ -462,16 +614,27 @@
       return;
     }
 
-    const messageKind = message.type || message.action || message.msg_type;
+    const messageKind = getMessageKind(message);
 
     if (messageKind === 'welcome') {
       currentUserId = message.user_id || currentUserId;
       userIdEl.textContent = currentUserId || '-';
+      setTimeout(() => sendPresence('presence'), 0);
       return;
     }
 
     if (messageKind === 'sync_response') {
       replayOperations(extractOperations(message), 'WebSocket');
+      return;
+    }
+
+    if (messageKind === 'presence') {
+      upsertOnlineUser(message);
+      return;
+    }
+
+    if (messageKind === 'leave') {
+      removeOnlineUser(message);
       return;
     }
 
@@ -561,6 +724,10 @@
   async function openCanvas(canvasId, canvasName) {
     if (!canvasId) return;
 
+    if (currentCanvasId && currentCanvasId !== canvasId) {
+      sendPresence('leave');
+    }
+
     currentCanvasId = canvasId;
     currentCanvasName = canvasName || canvasId;
     currentCanvasLabel.textContent = currentCanvasName;
@@ -576,15 +743,22 @@
     resetCanvasState();
     wsStatus.textContent = '连接中';
     wsStatus.className = 'disconnected';
+    window.dispatchEvent(new CustomEvent('synccanvas:canvas-opened', {
+      detail: { canvasId: currentCanvasId, canvasName: currentCanvasName }
+    }));
 
     resizeCanvas();
     await replayHistoryFromApi(canvasId, requestId);
     if (requestId !== replayRequestId) return;
     collector.start({ wsUrl: buildWsUrl(canvasId), canvasId });
+    startPresenceTimers();
   }
 
   function disconnectCanvas() {
+    sendPresence('leave');
     replayRequestId += 1;
+    stopPresenceTimers();
+
     if (collectorStarted) {
       collector.stop();
       collectorStarted = false;
@@ -597,6 +771,9 @@
     resetCanvasState();
     wsStatus.textContent = '未连接';
     wsStatus.className = 'disconnected';
+    window.dispatchEvent(new CustomEvent('synccanvas:canvas-opened', {
+      detail: { canvasId: null, canvasName: '' }
+    }));
   }
 
   penBtn.addEventListener('click', () => setActiveTool('pen'));
@@ -672,6 +849,7 @@
   collector.on('connect', () => {
     wsStatus.textContent = '已连接';
     wsStatus.className = 'connected';
+    sendPresence('presence');
   });
   collector.on('disconnect', () => {
     wsStatus.textContent = '未连接';
@@ -685,6 +863,7 @@
   window.addEventListener('resize', resizeCanvas);
 
   resizeCanvas();
+  renderOnlineUsers();
   setActiveTool('pen');
   setColor(colorPicker.value);
   collector.setWidth(Number(strokeWidth.value));

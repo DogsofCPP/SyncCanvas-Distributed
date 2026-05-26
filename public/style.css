@@ -21,17 +21,16 @@ input {
   font: inherit;
 }
 
-.app-shell,
-.draw-view {
-  position: relative;
+button {
+  cursor: pointer;
+}
+
+.app-shell {
   width: 100vw;
   height: 100vh;
 }
 
-.is-hidden {
-  display: none !important;
-}
-
+.is-hidden,
 [hidden] {
   display: none !important;
 }
@@ -112,11 +111,11 @@ input {
 }
 
 .primary-btn,
-.ghost-btn {
+.ghost-btn,
+.icon-text-btn {
   height: 40px;
   padding: 0 14px;
   border-radius: 6px;
-  cursor: pointer;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -137,13 +136,15 @@ input {
   cursor: not-allowed;
 }
 
-.ghost-btn {
+.ghost-btn,
+.icon-text-btn {
   color: #334155;
   background: #ffffff;
   border: 1px solid #cbd5e1;
 }
 
-.ghost-btn:hover {
+.ghost-btn:hover,
+.icon-text-btn:hover {
   color: #2563eb;
   border-color: #2563eb;
 }
@@ -156,7 +157,6 @@ input {
   color: #2563eb;
   background: none;
   border: 0;
-  cursor: pointer;
   font-size: 14px;
   font-weight: 700;
 }
@@ -264,7 +264,6 @@ input {
   height: 32px;
   padding: 0 12px;
   border-radius: 6px;
-  cursor: pointer;
   font-size: 13px;
   font-weight: 700;
   white-space: nowrap;
@@ -292,9 +291,159 @@ input {
   border-color: #b91c1c;
 }
 
+.draw-view {
+  position: relative;
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr) 260px;
+  width: 100vw;
+  height: 100vh;
+  background: #ffffff;
+}
+
+.draw-main {
+  position: relative;
+  min-width: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.draw-sidebar {
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100vh;
+  padding: 14px;
+  background: rgba(248, 250, 252, 0.98);
+  border-color: #d8dee8;
+  border-style: solid;
+  backdrop-filter: blur(10px);
+}
+
+.draw-sidebar-left {
+  border-width: 0 1px 0 0;
+}
+
+.draw-sidebar-right {
+  border-width: 0 0 0 1px;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.sidebar-header h2 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.sidebar-header p {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.sidebar-count {
+  min-width: 30px;
+  padding: 5px 8px;
+  color: #2563eb;
+  background: #dbeafe;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.draw-canvas-items,
+.online-user-items {
+  display: grid;
+  gap: 8px;
+  overflow: auto;
+  min-height: 0;
+}
+
+.draw-canvas-card,
+.online-user-card {
+  width: 100%;
+  padding: 10px;
+  color: #172033;
+  background: #ffffff;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  text-align: left;
+}
+
+.draw-canvas-card {
+  display: block;
+}
+
+.draw-canvas-card:hover {
+  border-color: #2563eb;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.1);
+}
+
+.draw-canvas-card.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.draw-canvas-card strong,
+.online-user-card strong {
+  display: block;
+  overflow: hidden;
+  margin-bottom: 4px;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.draw-canvas-card span,
+.online-user-card span {
+  display: block;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.online-user-card {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+}
+
+.user-avatar {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  color: #ffffff;
+  background: var(--user-color, #2563eb);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.sidebar-empty {
+  padding: 14px 10px;
+  color: #64748b;
+  background: #ffffff;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  font-size: 13px;
+  text-align: center;
+}
+
 #canvas {
   display: block;
-  width: 100vw;
+  width: 100%;
   height: 100vh;
   background: #ffffff;
   cursor: crosshair;
@@ -302,7 +451,7 @@ input {
 }
 
 #cursorLayer {
-  position: fixed;
+  position: absolute;
   inset: 0;
   z-index: 8;
   pointer-events: none;
@@ -338,14 +487,14 @@ input {
 }
 
 #toolbar {
-  position: fixed;
+  position: absolute;
   top: 16px;
   left: 16px;
   z-index: 10;
   display: flex;
   align-items: center;
   gap: 8px;
-  max-width: calc(100vw - 32px);
+  max-width: calc(100% - 32px);
   padding: 8px;
   background: rgba(255, 255, 255, 0.96);
   border: 1px solid #d8dee8;
@@ -389,7 +538,6 @@ input {
   background: #ffffff;
   border: 1px solid #cbd5e1;
   border-radius: 6px;
-  cursor: pointer;
   font-size: 13px;
   font-weight: 800;
   line-height: 1;
@@ -432,7 +580,6 @@ input {
   border: 2px solid #ffffff;
   border-radius: 999px;
   box-shadow: 0 0 0 1px #cbd5e1;
-  cursor: pointer;
 }
 
 .color-swatch.active {
@@ -460,7 +607,6 @@ input {
   padding: 1px;
   background: transparent;
   border: 0;
-  cursor: pointer;
 }
 
 #strokeWidth {
@@ -477,7 +623,7 @@ input {
 }
 
 #status {
-  position: fixed;
+  position: absolute;
   left: 16px;
   bottom: 16px;
   z-index: 10;
@@ -505,10 +651,58 @@ input {
   font-weight: 800;
 }
 
+@media (max-width: 1100px) {
+  .draw-view {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+
+  .draw-sidebar-right {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 220px;
+    transform: translateX(calc(100% - 38px));
+    transition: transform 160ms ease;
+  }
+
+  .draw-sidebar-right:hover,
+  .draw-sidebar-right:focus-within {
+    transform: translateX(0);
+  }
+}
+
 @media (max-width: 860px) {
+  .draw-view {
+    grid-template-columns: 1fr;
+  }
+
+  .draw-sidebar-left,
+  .draw-sidebar-right {
+    position: absolute;
+    top: 0;
+    width: min(240px, 82vw);
+    transform: translateX(calc(-100% + 38px));
+    transition: transform 160ms ease;
+  }
+
+  .draw-sidebar-left:hover,
+  .draw-sidebar-left:focus-within {
+    transform: translateX(0);
+  }
+
+  .draw-sidebar-right {
+    right: 0;
+    transform: translateX(calc(100% - 38px));
+  }
+
+  .draw-sidebar-right:hover,
+  .draw-sidebar-right:focus-within {
+    transform: translateX(0);
+  }
+
   #toolbar {
     right: 12px;
-    left: 12px;
+    left: 48px;
     flex-wrap: wrap;
   }
 
@@ -536,7 +730,7 @@ input {
   }
 
   #status {
-    right: 12px;
-    left: 12px;
+    right: 48px;
+    left: 48px;
   }
 }

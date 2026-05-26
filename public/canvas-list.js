@@ -25,11 +25,14 @@
   const canvasListLoading = document.getElementById('canvasListLoading');
   const canvasListError = document.getElementById('canvasListError');
   const backToListBtn = document.getElementById('backToListBtn');
+  const drawCanvasItems = document.getElementById('drawCanvasItems');
+  const refreshDrawCanvasesBtn = document.getElementById('refreshDrawCanvasesBtn');
 
   let token = localStorage.getItem(STORAGE_TOKEN) || null;
   let currentUser = null;
   let isRegisterMode = false;
   let latestCanvases = [];
+  let currentCanvasId = null;
   let canvasMeta = loadCanvasMeta();
 
   function loadCanvasMeta() {
@@ -128,9 +131,11 @@
   function logout() {
     setAuth(null, null);
     window.SyncCanvasDraw.disconnectCanvas();
+    currentCanvasId = null;
     loginName.value = '';
     loginPassword.value = '';
     clearLoginError();
+    renderDrawCanvasList();
     showOnly('login');
   }
 
@@ -179,6 +184,13 @@
     }
   }
 
+  async function fetchCanvases() {
+    const data = await apiRequest('GET', '/canvases');
+    latestCanvases = data.data?.canvases || [];
+    renderDrawCanvasList();
+    return latestCanvases;
+  }
+
   async function showCanvasList() {
     if (!token) {
       showOnly('login');
@@ -192,9 +204,7 @@
     canvasListLoading.hidden = false;
 
     try {
-      const data = await apiRequest('GET', '/canvases');
-      latestCanvases = data.data?.canvases || [];
-      renderCanvasList(latestCanvases);
+      renderCanvasList(await fetchCanvases());
     } catch (error) {
       showListError(`加载画布列表失败: ${error.message}`);
       if (/401|认证|令牌|token/i.test(error.message)) {
@@ -202,6 +212,15 @@
       }
     } finally {
       canvasListLoading.hidden = true;
+    }
+  }
+
+  async function refreshDrawCanvases() {
+    if (!token) return;
+    try {
+      await fetchCanvases();
+    } catch (error) {
+      renderDrawCanvasList(`加载失败: ${error.message}`);
     }
   }
 
@@ -238,6 +257,12 @@
     });
   }
 
+  function sortedCanvases(canvases) {
+    return canvases
+      .slice()
+      .sort((a, b) => new Date(getUpdatedAt(b)).getTime() - new Date(getUpdatedAt(a)).getTime());
+  }
+
   function renderCanvasList(canvases) {
     canvasItems.innerHTML = '';
 
@@ -249,53 +274,86 @@
       return;
     }
 
-    canvases
-      .slice()
-      .sort((a, b) => new Date(getUpdatedAt(b)).getTime() - new Date(getUpdatedAt(a)).getTime())
-      .forEach((canvas) => {
-        const canvasId = getCanvasId(canvas);
-        const isOwner = currentUser && canvas.owner_id === currentUser.user_id;
-        const localMeta = canvasMeta[canvasId] || {};
-        const operationCount = canvas.total_operations ?? canvas.operation_count ?? localMeta.operationCount;
-        const latestSeq = canvas.latest_sequence_id ?? canvas.latestSequenceId ?? localMeta.latestSequenceId;
+    sortedCanvases(canvases).forEach((canvas) => {
+      const canvasId = getCanvasId(canvas);
+      const isOwner = currentUser && canvas.owner_id === currentUser.user_id;
+      const localMeta = canvasMeta[canvasId] || {};
+      const operationCount = canvas.total_operations ?? canvas.operation_count ?? localMeta.operationCount;
+      const latestSeq = canvas.latest_sequence_id ?? canvas.latestSequenceId ?? localMeta.latestSequenceId;
 
-        const item = document.createElement('div');
-        item.className = 'canvas-item';
-        item.innerHTML = `
-          <div class="canvas-info">
-            <strong class="canvas-name"></strong>
-            <div class="canvas-meta-grid">
-              <span class="canvas-meta canvas-id"></span>
-              <span class="canvas-meta canvas-created"></span>
-              <span class="canvas-meta canvas-updated"></span>
-              <span class="canvas-meta canvas-extra"></span>
-            </div>
+      const item = document.createElement('div');
+      item.className = 'canvas-item';
+      item.innerHTML = `
+        <div class="canvas-info">
+          <strong class="canvas-name"></strong>
+          <div class="canvas-meta-grid">
+            <span class="canvas-meta canvas-id"></span>
+            <span class="canvas-meta canvas-created"></span>
+            <span class="canvas-meta canvas-updated"></span>
+            <span class="canvas-meta canvas-extra"></span>
           </div>
-          <div class="canvas-actions">
-            <button class="canvas-enter-btn" type="button">进入</button>
-            ${isOwner ? '<button class="canvas-delete-btn" type="button">删除</button>' : ''}
-          </div>
-        `;
+        </div>
+        <div class="canvas-actions">
+          <button class="canvas-enter-btn" type="button">进入</button>
+          ${isOwner ? '<button class="canvas-delete-btn" type="button">删除</button>' : ''}
+        </div>
+      `;
 
-        item.querySelector('.canvas-name').textContent = canvas.name || canvasId;
-        item.querySelector('.canvas-id').textContent = `ID: ${canvasId}`;
-        item.querySelector('.canvas-created').textContent = `创建: ${formatDate(getCreatedAt(canvas))}`;
-        item.querySelector('.canvas-updated').textContent = `最后修改: ${formatDate(getUpdatedAt(canvas))}`;
-        item.querySelector('.canvas-extra').textContent = [
-          isOwner ? '我创建的' : '协作画布',
-          operationCount != null ? `${operationCount} 次操作` : null,
-          latestSeq != null ? `序列 ${latestSeq}` : null
-        ].filter(Boolean).join(' · ');
+      item.querySelector('.canvas-name').textContent = canvas.name || canvasId;
+      item.querySelector('.canvas-id').textContent = `ID: ${canvasId}`;
+      item.querySelector('.canvas-created').textContent = `创建: ${formatDate(getCreatedAt(canvas))}`;
+      item.querySelector('.canvas-updated').textContent = `最后修改: ${formatDate(getUpdatedAt(canvas))}`;
+      item.querySelector('.canvas-extra').textContent = [
+        isOwner ? '我创建的' : '协作画布',
+        operationCount != null ? `${operationCount} 次操作` : null,
+        latestSeq != null ? `序列 ${latestSeq}` : null
+      ].filter(Boolean).join(' · ');
 
-        item.querySelector('.canvas-enter-btn').addEventListener('click', () => enterCanvas(canvas));
+      item.querySelector('.canvas-enter-btn').addEventListener('click', () => enterCanvas(canvas));
 
-        const deleteBtn = item.querySelector('.canvas-delete-btn');
-        if (deleteBtn) {
-          deleteBtn.addEventListener('click', () => handleDeleteCanvas(canvas, item));
-        }
+      const deleteBtn = item.querySelector('.canvas-delete-btn');
+      if (deleteBtn) {
+        deleteBtn.addEventListener('click', () => handleDeleteCanvas(canvas, item));
+      }
 
-        canvasItems.appendChild(item);
-      });
+      canvasItems.appendChild(item);
+    });
+  }
+
+  function renderDrawCanvasList(errorMessage) {
+    drawCanvasItems.innerHTML = '';
+
+    if (errorMessage) {
+      const error = document.createElement('div');
+      error.className = 'sidebar-empty';
+      error.textContent = errorMessage;
+      drawCanvasItems.appendChild(error);
+      return;
+    }
+
+    if (!latestCanvases.length) {
+      const empty = document.createElement('div');
+      empty.className = 'sidebar-empty';
+      empty.textContent = token ? '暂无画板' : '登录后显示画板';
+      drawCanvasItems.appendChild(empty);
+      return;
+    }
+
+    sortedCanvases(latestCanvases).forEach((canvas) => {
+      const canvasId = getCanvasId(canvas);
+      const item = document.createElement('button');
+      item.className = 'draw-canvas-card';
+      item.type = 'button';
+      item.classList.toggle('active', canvasId === currentCanvasId);
+      item.innerHTML = `
+        <strong></strong>
+        <span></span>
+      `;
+      item.querySelector('strong').textContent = canvas.name || canvasId;
+      item.querySelector('span').textContent = `最后修改 ${formatDate(getUpdatedAt(canvas))}`;
+      item.addEventListener('click', () => enterCanvas(canvas));
+      drawCanvasItems.appendChild(item);
+    });
   }
 
   async function handleDeleteCanvas(canvas, itemElement) {
@@ -311,6 +369,7 @@
       saveCanvasMeta();
       latestCanvases = latestCanvases.filter((item) => getCanvasId(item) !== canvasId);
       renderCanvasList(latestCanvases);
+      renderDrawCanvasList();
     } catch (error) {
       itemElement.style.opacity = '1';
       itemElement.style.pointerEvents = 'auto';
@@ -345,8 +404,18 @@
   }
 
   function enterCanvas(canvas) {
+    const canvasId = getCanvasId(canvas);
+    currentCanvasId = canvasId;
     showOnly('draw');
-    window.SyncCanvasDraw.openCanvas(getCanvasId(canvas), canvas.name || getCanvasId(canvas));
+    renderDrawCanvasList();
+    window.SyncCanvasDraw.openCanvas(canvasId, canvas.name || canvasId);
+  }
+
+  function enterCanvasById(canvasId) {
+    const canvas = latestCanvases.find((item) => getCanvasId(item) === canvasId);
+    if (canvas) {
+      enterCanvas(canvas);
+    }
   }
 
   function markCanvasModified(canvasId, timestamp, latestSequenceId) {
@@ -358,6 +427,7 @@
       operationCount: Number(current.operationCount || 0) + 1
     };
     saveCanvasMeta();
+    renderDrawCanvasList();
   }
 
   loginForm.addEventListener('submit', handleAuth);
@@ -370,13 +440,21 @@
   });
   backToListBtn.addEventListener('click', () => {
     window.SyncCanvasDraw.disconnectCanvas();
+    currentCanvasId = null;
     showCanvasList();
   });
   logoutBtn.addEventListener('click', logout);
+  refreshDrawCanvasesBtn.addEventListener('click', refreshDrawCanvases);
+
+  window.addEventListener('synccanvas:canvas-opened', (event) => {
+    currentCanvasId = event.detail.canvasId;
+    renderDrawCanvasList();
+  });
 
   if (loadAuth() && token) {
     showCanvasList();
   } else {
+    renderDrawCanvasList();
     showOnly('login');
   }
 
@@ -384,8 +462,11 @@
     logout,
     showCanvasList,
     refreshCanvases: showCanvasList,
+    refreshDrawCanvases,
     apiRequest,
     markCanvasModified,
+    enterCanvasById,
+    getCanvases: () => latestCanvases.slice(),
     getToken: () => token,
     getCurrentUser: () => currentUser,
     isLoggedIn: () => Boolean(token)

@@ -49,55 +49,79 @@
     </section>
 
     <section id="drawView" class="draw-view is-hidden" aria-label="协作画布">
-      <div id="toolbar" aria-label="画布工具栏">
-        <div class="toolbar-group toolbar-meta">
-          <button class="tool-btn" id="backToListBtn" type="button" title="返回画布列表">返回</button>
-          <span id="currentCanvasLabel" class="canvas-label">未选择画布</span>
+      <aside class="draw-sidebar draw-sidebar-left" aria-label="画板列表">
+        <div class="sidebar-header">
+          <div>
+            <h2>画板</h2>
+            <p>点击切换画布</p>
+          </div>
+          <button id="refreshDrawCanvasesBtn" class="icon-text-btn" type="button">刷新</button>
         </div>
+        <div id="drawCanvasItems" class="draw-canvas-items" aria-live="polite"></div>
+      </aside>
 
-        <div class="toolbar-group">
-          <button class="tool-btn active" id="penBtn" type="button" title="画笔">画笔</button>
-          <button class="tool-btn" id="eraserBtn" type="button" title="橡皮擦">橡皮擦</button>
-        </div>
+      <div class="draw-main">
+        <div id="toolbar" aria-label="画布工具栏">
+          <div class="toolbar-group toolbar-meta">
+            <button class="tool-btn" id="backToListBtn" type="button" title="返回画布列表">返回</button>
+            <span id="currentCanvasLabel" class="canvas-label">未选择画布</span>
+          </div>
 
-        <div class="toolbar-group color-panel" aria-label="颜色面板">
-          <button class="color-swatch active" type="button" data-color="#000000" style="--swatch:#000000" aria-label="黑色"></button>
-          <button class="color-swatch" type="button" data-color="#ef4444" style="--swatch:#ef4444" aria-label="红色"></button>
-          <button class="color-swatch" type="button" data-color="#2563eb" style="--swatch:#2563eb" aria-label="蓝色"></button>
-          <button class="color-swatch" type="button" data-color="#16a34a" style="--swatch:#16a34a" aria-label="绿色"></button>
-          <button class="color-swatch" type="button" data-color="#f59e0b" style="--swatch:#f59e0b" aria-label="橙色"></button>
-          <label class="color-control" title="自定义颜色">
-            <span>颜色</span>
-            <input type="color" id="colorPicker" value="#000000" aria-label="颜色选择器">
+          <div class="toolbar-group">
+            <button class="tool-btn active" id="penBtn" type="button" title="画笔">画笔</button>
+            <button class="tool-btn" id="eraserBtn" type="button" title="橡皮擦">橡皮擦</button>
+          </div>
+
+          <div class="toolbar-group color-panel" aria-label="颜色面板">
+            <button class="color-swatch active" type="button" data-color="#000000" style="--swatch:#000000" aria-label="黑色"></button>
+            <button class="color-swatch" type="button" data-color="#ef4444" style="--swatch:#ef4444" aria-label="红色"></button>
+            <button class="color-swatch" type="button" data-color="#2563eb" style="--swatch:#2563eb" aria-label="蓝色"></button>
+            <button class="color-swatch" type="button" data-color="#16a34a" style="--swatch:#16a34a" aria-label="绿色"></button>
+            <button class="color-swatch" type="button" data-color="#f59e0b" style="--swatch:#f59e0b" aria-label="橙色"></button>
+            <label class="color-control" title="自定义颜色">
+              <span>颜色</span>
+              <input type="color" id="colorPicker" value="#000000" aria-label="颜色选择器">
+            </label>
+          </div>
+
+          <label class="width-control" title="线条粗细">
+            <span>粗细</span>
+            <input type="range" id="strokeWidth" min="1" max="50" value="3" aria-label="线条粗细">
+            <output id="widthValue" for="strokeWidth">3</output>
           </label>
+
+          <div class="toolbar-group">
+            <button class="tool-btn" id="undoBtn" type="button" title="撤销">撤销</button>
+            <button class="tool-btn danger" id="clearBtn" type="button" title="清空画布（同步清除所有用户）">清空</button>
+          </div>
         </div>
 
-        <label class="width-control" title="线条粗细">
-          <span>粗细</span>
-          <input type="range" id="strokeWidth" min="1" max="50" value="3" aria-label="线条粗细">
-          <output id="widthValue" for="strokeWidth">3</output>
-        </label>
+        <canvas id="canvas" aria-label="协作画布"></canvas>
+        <div id="cursorLayer" aria-hidden="true"></div>
 
-        <div class="toolbar-group">
-          <button class="tool-btn" id="undoBtn" type="button" title="撤销">撤销</button>
-          <button class="tool-btn danger" id="clearBtn" type="button" title="清空画布（同步清除所有用户）">清空</button>
+        <div id="status" aria-live="polite">
+          状态: <span id="wsStatus" class="disconnected">未连接</span>
+          <span class="divider">|</span>
+          重放: <span id="replayStatus">未开始</span>
+          <span class="divider">|</span>
+          用户: <span id="userId">-</span>
+          <span class="divider">|</span>
+          在线: <span id="onlineCount">0</span>
+          <span class="divider">|</span>
+          序列: <span id="sequenceId">0</span>
         </div>
       </div>
 
-      <canvas id="canvas" aria-label="协作画布"></canvas>
-      <div id="cursorLayer" aria-hidden="true"></div>
-
-      <div id="status" aria-live="polite">
-        状态: <span id="wsStatus" class="disconnected">未连接</span>
-        <span class="divider">|</span>
-        重放: <span id="replayStatus">未开始</span>
-        <span class="divider">|</span>
-        用户: <span id="userId">-</span>
-        <span class="divider">|</span>
-        在线: <span id="onlineCount">0</span>
-        <span class="divider">|</span>
-        序列: <span id="sequenceId">0</span>
-      </div>
+      <aside class="draw-sidebar draw-sidebar-right" aria-label="在线用户">
+        <div class="sidebar-header">
+          <div>
+            <h2>在线用户</h2>
+            <p>当前画板协作者</p>
+          </div>
+          <span id="sideOnlineCount" class="sidebar-count">0</span>
+        </div>
+        <div id="onlineUserItems" class="online-user-items" aria-live="polite"></div>
+      </aside>
     </section>
   </main>
 
