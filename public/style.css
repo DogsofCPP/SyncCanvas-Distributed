@@ -419,6 +419,22 @@ button {
   align-items: center;
 }
 
+.online-user-card:hover {
+  border-color: #2563eb;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.1);
+}
+
+.online-user-card.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  box-shadow: 0 10px 26px rgba(37, 99, 235, 0.12);
+}
+
+.online-user-card:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.18);
+  outline-offset: 2px;
+}
+
 .user-avatar {
   display: grid;
   width: 30px;

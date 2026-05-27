@@ -48,6 +48,7 @@
   let presenceTimerId = null;
   let onlinePruneTimerId = null;
   let activeConnectionToken = 0;
+  let highlightUserId = null;
 
   function buildWsUrl(canvasId) {
     const token = getAuthToken();
@@ -288,7 +289,23 @@
 
   function drawOperation(operation) {
     const style = getDrawStyle(operation.action, operation.color, operation.width);
+    const shouldDim = highlightUserId && operation.user_id !== highlightUserId;
+
+    offscreenCtx.save();
+    if (shouldDim) {
+      offscreenCtx.globalAlpha = 0.18;
+    } else if (highlightUserId && operation.user_id === highlightUserId) {
+      offscreenCtx.globalAlpha = 1;
+    }
+
     drawSmoothPoints(offscreenCtx, operation.points, style.color, style.width);
+
+    if (highlightUserId && operation.user_id === highlightUserId) {
+      // 给高亮用户增加一层“光晕”描边，避免仅靠透明度不够明显
+      drawSmoothPoints(offscreenCtx, operation.points, '#f59e0b', style.width + 3);
+    }
+
+    offscreenCtx.restore();
   }
 
   function redrawCanvas() {
@@ -478,8 +495,11 @@
     }
 
     users.forEach((user) => {
-      const item = document.createElement('div');
+      const item = document.createElement('button');
+      item.type = 'button';
       item.className = 'online-user-card';
+      item.dataset.userId = user.userId;
+      item.classList.toggle('active', highlightUserId === user.userId);
       item.style.setProperty('--user-color', user.color);
       item.innerHTML = `
         <span class="user-avatar"></span>
@@ -491,6 +511,18 @@
       item.querySelector('.user-avatar').textContent = user.username.slice(0, 1).toUpperCase();
       item.querySelector('strong').textContent = user.username;
       item.querySelector('span span').textContent = `最近活跃 ${formatRelativeTime(user.lastSeenAt)}`;
+
+      item.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (!currentCanvasId) return;
+
+        highlightUserId = highlightUserId === user.userId ? null : user.userId;
+        renderOnlineUsers();
+        redrawCanvas();
+      });
+
       onlineUserItems.appendChild(item);
     });
   }
