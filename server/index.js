@@ -520,17 +520,37 @@ async function checkAndGenerateSnapshot(canvasId) {
 async function buildCanvasOperation(message, userId, canvasId) {
   const msgType = message.action || message.msg_type || 'stroke';
 
-  return {
+  const base = {
     canvas_id: canvasId,
     action: msgType,
     msg_type: msgType,
     sequence_id: await getNextSequenceId(),
     user_id: userId,
+    timestamp: message.timestamp || Date.now(),
+  };
+
+  if (msgType === 'element_add') {
+    // 确保 element_id 始终有值，避免唯一索引冲突
+    const elementId = message.element_id || message.stroke_id || generateStrokeId();
+    return {
+      ...base,
+      stroke_id: message.stroke_id || message.element_id || generateStrokeId(),
+      element_id: elementId,
+      kind: message.kind || null,
+      data: message.data || null,
+      style: message.style || null,
+      points: Array.isArray(message.points) ? message.points : [],
+      color: message.color || (message.style && message.style.stroke) || '#000000',
+      width: message.width || (message.style && message.style.stroke_width) || 3,
+    };
+  }
+
+  return {
+    ...base,
     stroke_id: message.stroke_id || generateStrokeId(),
     points: Array.isArray(message.points) ? message.points : [],
     color: message.color || '#000000',
     width: message.width || 3,
-    timestamp: message.timestamp || Date.now(),
   };
 }
 
@@ -539,7 +559,7 @@ async function buildCanvasOperation(message, userId, canvasId) {
  */
 async function handleClientMessage(userId, canvasId, data) {
   const message = JSON.parse(data.toString());
-  console.log(`[消息] userId=${userId}, canvas=${canvasId}, stroke_id=${message.stroke_id}, points=${message.points?.length || 0}`);
+  console.log(`[消息] userId=${userId}, canvas=${canvasId}, action=${message.action || message.type}, id=${message.element_id || message.stroke_id}, points=${message.points?.length || 0}`);
 
   // 处理清空画布操作（同步撤销）
   if (message.type === 'clear' || message.action === 'clear') {
@@ -695,6 +715,23 @@ wss.on('connection', async (ws, req) => {
       const msg = JSON.parse(data.toString());
 
       if (msg.type === 'pong') {
+        return;
+      }
+
+      // cursor_local 仅用于在线光标显示，不写入持久化链路
+      if (msg.type === 'cursor_local' || msg.action === 'cursor_local') {
+        const msgCanvasId = msg.canvas_id || canvasId;
+        if (!msgCanvasId) return;
+        await publish(`canvas:${msgCanvasId}`, {
+          type: 'cursor',
+          action: 'cursor',
+          canvas_id: msgCanvasId,
+          user_id: userId,
+          username: decoded.username,
+          points: Array.isArray(msg.points) ? msg.points : [],
+          color: msg.color,
+          timestamp: msg.timestamp || Date.now(),
+        });
         return;
       }
 

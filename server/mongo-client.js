@@ -53,10 +53,15 @@ async function connectMongo() {
 async function ensureIndexes() {
   const collection = db.collection(COLLECTION_STROKES);
 
-  // stroke_id 唯一索引（每个笔画一个文档）
+  // 统一 element_id/stroke_id 唯一索引（每个元素一个文档）
+  // 兼容旧数据：仍可能只有 stroke_id，没有 element_id
   await collection.createIndex(
     { stroke_id: 1 },
     { unique: true }
+  );
+  await collection.createIndex(
+    { element_id: 1 },
+    { unique: true, sparse: true }
   );
   // 画布内按顺序查询
   await collection.createIndex({ canvas_id: 1, sequence_id: 1 });
@@ -95,25 +100,35 @@ function getStrokesCollection() {
  */
 async function saveStroke(operation, canvasId = 'default') {
   const collection = getStrokesCollection();
-  const points = operation.points || [];
 
-  if (points.length === 0) {
+  const isElementAdd = operation.action === 'element_add' || operation.msg_type === 'element_add';
+  const points = Array.isArray(operation.points) ? operation.points : [];
+
+  // element_add 可以没有 points；stroke/erase 必须有 points
+  if (!isElementAdd && points.length === 0) {
     return { insertedCount: 0 };
   }
 
-  // 存储完整的笔画数据
+  // 确保 element_add 操作始终有有效的 element_id
+  const elementId = isElementAdd
+    ? (operation.element_id || operation.stroke_id || `auto_${Date.now()}_${Math.random().toString(36).slice(2)}`)
+    : (operation.element_id || null);
+
   const document = {
     canvas_id: canvasId,
     stroke_id: operation.stroke_id,
+    element_id: elementId,
+    kind: operation.kind || null,
+    data: operation.data || null,
+    style: operation.style || null,
     sequence_id: operation.sequence_id,
     user_id: operation.user_id,
-    msg_type: operation.msg_type || 'stroke',
+    msg_type: operation.msg_type || operation.action || 'stroke',
     action: operation.action || operation.msg_type || 'stroke',
     color: operation.color || '#000000',
     width: operation.width || 3,
     timestamp: operation.timestamp || Date.now(),
     created_at: new Date(),
-    // 存储所有点（10ms 间隔）
     points: points.map((p, i) => ({
       x: p.x,
       y: p.y,
@@ -122,9 +137,13 @@ async function saveStroke(operation, canvasId = 'default') {
     point_count: points.length,
   };
 
-  // 使用 upsert 确保同一 stroke_id 只存储一条记录
+  // element_add 用 element_id（或 fallback stroke_id）去 upsert；旧 stroke 继续用 stroke_id
+  const filter = isElementAdd
+    ? { element_id: elementId }
+    : { stroke_id: operation.stroke_id };
+
   const result = await collection.updateOne(
-    { stroke_id: operation.stroke_id },
+    filter,
     { $set: document },
     { upsert: true }
   );
@@ -148,15 +167,25 @@ async function saveStrokesBatch(operations, canvasId = 'default') {
   const documents = [];
 
   for (const operation of operations) {
-    const points = operation.points || [];
-    if (points.length === 0) continue;
+    const isElementAdd = operation.action === 'element_add' || operation.msg_type === 'element_add';
+    const points = Array.isArray(operation.points) ? operation.points : [];
 
-    documents.push({
+    if (!isElementAdd && points.length === 0) continue;
+
+    // 确保 element_add 操作始终有有效的 element_id
+    const elementId = isElementAdd 
+      ? (operation.element_id || operation.stroke_id || `auto_${Date.now()}_${Math.random().toString(36).slice(2)}`)
+      : (operation.element_id || null);
+
+    const doc = {
       canvas_id: canvasId,
       stroke_id: operation.stroke_id,
+      kind: operation.kind || null,
+      data: operation.data || null,
+      style: operation.style || null,
       sequence_id: operation.sequence_id,
       user_id: operation.user_id,
-      msg_type: operation.msg_type || 'stroke',
+      msg_type: operation.msg_type || operation.action || 'stroke',
       action: operation.action || operation.msg_type || 'stroke',
       color: operation.color || '#000000',
       width: operation.width || 3,
@@ -168,7 +197,14 @@ async function saveStrokesBatch(operations, canvasId = 'default') {
         t: p.t || (operation.timestamp || Date.now()) + i * 10
       })),
       point_count: points.length,
-    });
+    };
+    
+    // 只保存有效的 element_id，避免 null 值导致唯一索引冲突
+    if (elementId) {
+      doc.element_id = elementId;
+    }
+    
+    documents.push(doc);
   }
 
   if (documents.length === 0) {
@@ -177,13 +213,19 @@ async function saveStrokesBatch(operations, canvasId = 'default') {
 
   // 批量 upsert
   const results = await Promise.all(
-    documents.map(doc =>
-      collection.updateOne(
-        { stroke_id: doc.stroke_id },
+    documents.map((doc) => {
+      const isElementAdd = doc.action === 'element_add' || doc.msg_type === 'element_add';
+      const elementKey = doc.element_id || doc.stroke_id;
+      const filter = isElementAdd
+        ? { element_id: elementKey }
+        : { stroke_id: doc.stroke_id };
+
+      return collection.updateOne(
+        filter,
         { $set: doc },
         { upsert: true }
-      )
-    )
+      );
+    })
   );
 
   return { insertedCount: results.filter(r => r.upsertedCount > 0).length };

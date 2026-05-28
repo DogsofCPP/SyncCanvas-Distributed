@@ -10,18 +10,28 @@
   <main class="app-shell">
     <section id="loginView" class="auth-view" aria-labelledby="loginTitle">
       <form id="loginForm" class="login-panel">
-        <h1 id="loginTitle">SyncCanvas</h1>
-        <p id="loginDesc">登录后选择或创建一个协作画布。</p>
+        <div class="brand-header">
+          <div class="brand-mark" aria-hidden="true"></div>
+          <div>
+            <h1 id="loginTitle">SyncCanvas</h1>
+            <p id="loginDesc">登录后选择或创建一个协作画布。</p>
+          </div>
+        </div>
         <div id="loginError" class="form-error" hidden></div>
 
-        <label for="loginName">用户名</label>
-        <div class="inline-form">
-          <input id="loginName" name="loginName" type="text" autocomplete="name" placeholder="输入你的名字" required>
-          <button class="primary-btn" type="submit">登录</button>
+        <div class="field-grid">
+          <label class="field" for="loginName">
+            <span class="field-label">用户名</span>
+            <input id="loginName" name="loginName" type="text" autocomplete="name" placeholder="输入你的名字" required>
+          </label>
+
+          <label class="field" for="loginPassword">
+            <span class="field-label">密码</span>
+            <input id="loginPassword" name="loginPassword" type="password" autocomplete="current-password" placeholder="输入密码">
+          </label>
         </div>
 
-        <label for="loginPassword">密码</label>
-        <input id="loginPassword" name="loginPassword" type="password" autocomplete="current-password" placeholder="输入密码">
+        <button class="primary-btn primary-btn-block" type="submit">登录</button>
 
         <button id="loginToggle" class="text-btn" type="button">没有账号？注册</button>
       </form>
@@ -30,9 +40,12 @@
     <section id="canvasListView" class="canvas-list-view is-hidden" aria-labelledby="canvasListTitle">
       <div class="canvas-list-panel">
         <div class="panel-heading">
-          <div>
-            <h1 id="canvasListTitle">画布列表</h1>
-            <p>欢迎，<span id="currentUserName">-</span></p>
+          <div class="panel-title">
+            <div class="brand-mark small" aria-hidden="true"></div>
+            <div>
+              <h1 id="canvasListTitle">画布列表</h1>
+              <p>欢迎，<span id="currentUserName">-</span></p>
+            </div>
           </div>
           <button id="logoutBtn" class="ghost-btn" type="button">退出</button>
         </div>
@@ -70,6 +83,11 @@
           <div class="toolbar-group">
             <button class="tool-btn active" id="penBtn" type="button" title="画笔">画笔</button>
             <button class="tool-btn" id="eraserBtn" type="button" title="橡皮擦">橡皮擦</button>
+            <span class="toolbar-divider" aria-hidden="true"></span>
+            <button class="tool-btn" id="rectBtn" type="button" title="矩形">矩形</button>
+            <button class="tool-btn" id="ellipseBtn" type="button" title="圆 / 椭圆">圆形</button>
+            <button class="tool-btn" id="lineBtn" type="button" title="直线">直线</button>
+            <button class="tool-btn" id="textBtn" type="button" title="文字">文字</button>
           </div>
 
           <div class="toolbar-group color-panel" aria-label="颜色面板">

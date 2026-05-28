@@ -3,6 +3,10 @@
   const ctx = canvas.getContext('2d');
   const penBtn = document.getElementById('penBtn');
   const eraserBtn = document.getElementById('eraserBtn');
+  const rectBtn = document.getElementById('rectBtn');
+  const ellipseBtn = document.getElementById('ellipseBtn');
+  const lineBtn = document.getElementById('lineBtn');
+  const textBtn = document.getElementById('textBtn');
   const colorPicker = document.getElementById('colorPicker');
   const colorSwatches = Array.from(document.querySelectorAll('.color-swatch'));
   const strokeWidth = document.getElementById('strokeWidth');
@@ -40,6 +44,8 @@
   let localSequenceId = Date.now();
   let isDrawing = false;
   let lastPoint = null;
+  let activeTool = 'pen';
+  let elementStartPoint = null;
   let collectorStarted = false;
   let presentQueued = false;
   let replayRequestId = 0;
@@ -49,6 +55,8 @@
   let onlinePruneTimerId = null;
   let activeConnectionToken = 0;
   let highlightUserId = null;
+  let previewElement = null;
+  let textEditor = null;
 
   function buildWsUrl(canvasId) {
     const token = getAuthToken();
@@ -90,6 +98,9 @@
       presentQueued = false;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(offscreenCanvas, 0, 0);
+      if (previewElement) {
+        drawElementOn(ctx, previewElement, { isPreview: true });
+      }
     });
   }
 
@@ -116,6 +127,81 @@
       x: event.clientX - rect.left,
       y: event.clientY - rect.top
     };
+  }
+
+  function removeTextEditor() {
+    if (!textEditor) return;
+    textEditor.remove();
+    textEditor = null;
+  }
+
+  function commitTextEditor() {
+    if (!textEditor || !currentCanvasId) return;
+
+    const text = textEditor.value;
+    const x = Number(textEditor.dataset.canvasX);
+    const y = Number(textEditor.dataset.canvasY);
+
+    removeTextEditor();
+
+    if (!text || !text.trim()) return;
+
+    const element = {
+      action: 'element_add',
+      canvas_id: currentCanvasId,
+      element_id: crypto.randomUUID(),
+      kind: 'text',
+      data: {
+        x,
+        y,
+        text: text.trim(),
+        font_size: 20,
+        font_family: 'Arial',
+        align: 'left'
+      },
+      style: buildElementStyle(),
+      timestamp: Date.now()
+    };
+
+    collector.send(element);
+  }
+
+  function spawnTextEditor(atPoint) {
+    if (!currentCanvasId) return;
+
+    removeTextEditor();
+
+    const rect = canvas.getBoundingClientRect();
+    const editor = document.createElement('textarea');
+    editor.className = 'canvas-text-editor';
+    editor.rows = 1;
+    editor.placeholder = '输入文字，Enter 确认';
+    editor.style.left = `${rect.left + atPoint.x}px`;
+    editor.style.top = `${rect.top + atPoint.y}px`;
+    editor.style.color = colorPicker.value;
+
+    editor.dataset.canvasX = String(atPoint.x);
+    editor.dataset.canvasY = String(atPoint.y);
+
+    document.body.appendChild(editor);
+    editor.focus();
+
+    editor.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        commitTextEditor();
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        removeTextEditor();
+      }
+    });
+
+    editor.addEventListener('blur', () => {
+      commitTextEditor();
+    });
+
+    textEditor = editor;
   }
 
   function viewportPointToCanvasPoint(point) {
@@ -145,6 +231,10 @@
     return collector.getStatus().tool;
   }
 
+  function isShapeTool(tool) {
+    return tool === 'rect' || tool === 'ellipse' || tool === 'line' || tool === 'text';
+  }
+
   function getDrawStyle(action, color, width) {
     if (action === 'erase') {
       return {
@@ -170,6 +260,78 @@
     targetCtx.moveTo(fromPoint.x, fromPoint.y);
     targetCtx.lineTo(toPoint.x, toPoint.y);
     targetCtx.stroke();
+    targetCtx.restore();
+  }
+
+  function normalizeRect(x1, y1, x2, y2) {
+    const left = Math.min(x1, x2);
+    const top = Math.min(y1, y2);
+    const width = Math.abs(x2 - x1);
+    const height = Math.abs(y2 - y1);
+    return { left, top, width, height };
+  }
+
+  function buildElementStyle() {
+    const stroke = colorPicker.value;
+    const width = Math.max(Number(strokeWidth.value) || 1, 1);
+    return {
+      stroke,
+      fill: 'transparent',
+      stroke_width: width,
+      opacity: 1
+    };
+  }
+
+  function drawElementOn(targetCtx, element, options = {}) {
+    if (!element || !element.kind) return;
+
+    const style = element.style || {};
+    const stroke = style.stroke || element.color || '#111827';
+    const fill = style.fill || 'transparent';
+    const width = Math.max(Number(style.stroke_width ?? element.width ?? 3) || 1, 1);
+    const opacity = Math.max(0, Math.min(1, Number(style.opacity ?? 1) || 1));
+
+    targetCtx.save();
+    targetCtx.globalAlpha = (options.isPreview ? 0.65 : 1) * opacity;
+    targetCtx.lineWidth = width;
+    targetCtx.strokeStyle = stroke;
+    targetCtx.fillStyle = fill;
+    targetCtx.lineCap = 'round';
+    targetCtx.lineJoin = 'round';
+
+    if (element.kind === 'rect') {
+      const { x1, y1, x2, y2 } = element.data || {};
+      const rect = normalizeRect(x1, y1, x2, y2);
+      if (fill && fill !== 'transparent') targetCtx.fillRect(rect.left, rect.top, rect.width, rect.height);
+      targetCtx.strokeRect(rect.left, rect.top, rect.width, rect.height);
+    } else if (element.kind === 'ellipse') {
+      const { x1, y1, x2, y2 } = element.data || {};
+      const rect = normalizeRect(x1, y1, x2, y2);
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const rx = rect.width / 2;
+      const ry = rect.height / 2;
+      targetCtx.beginPath();
+      targetCtx.ellipse(cx, cy, Math.max(rx, 0.5), Math.max(ry, 0.5), 0, 0, Math.PI * 2);
+      if (fill && fill !== 'transparent') targetCtx.fill();
+      targetCtx.stroke();
+    } else if (element.kind === 'line') {
+      const { x1, y1, x2, y2 } = element.data || {};
+      targetCtx.beginPath();
+      targetCtx.moveTo(x1, y1);
+      targetCtx.lineTo(x2, y2);
+      targetCtx.stroke();
+    } else if (element.kind === 'text') {
+      const { x, y, text, font_size, font_family, align } = element.data || {};
+      const fontSize = Math.max(Number(font_size) || 20, 8);
+      const fontFamily = font_family || 'Arial';
+      targetCtx.font = `${fontSize}px ${fontFamily}`;
+      targetCtx.textBaseline = 'top';
+      targetCtx.textAlign = align || 'left';
+      targetCtx.fillStyle = stroke;
+      targetCtx.fillText(String(text || ''), x, y);
+    }
+
     targetCtx.restore();
   }
 
@@ -218,10 +380,37 @@
   }
 
   function normalizeOperation(message, options = {}) {
+    const action = message.action || message.msg_type || 'stroke';
+
+    if (action === 'element_add') {
+      const data = message.data || {};
+      const style = message.style || {};
+
+      return {
+        action: 'element_add',
+        canvas_id: message.canvas_id || currentCanvasId,
+        stroke_id: message.stroke_id || message.element_id || crypto.randomUUID(),
+        element_id: message.element_id || message.stroke_id || null,
+        kind: message.kind,
+        data,
+        style,
+        points: Array.isArray(message.points)
+          ? message.points.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+          : [],
+        color: message.color || style.stroke || '#111827',
+        width: Number(message.width ?? style.stroke_width) || 3,
+        user_id: message.user_id || currentUserId || 'local',
+        timestamp: Number(message.timestamp) || Date.now(),
+        sequence_id: Number.isFinite(message.sequence_id) ? message.sequence_id : null,
+        local_sequence_id: options.localSequenceId || null,
+        local_key: options.localKey || null,
+        optimistic: Boolean(options.optimistic)
+      };
+    }
+
     const points = Array.isArray(message.points)
       ? message.points.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
       : [];
-    const action = message.action || message.msg_type || 'stroke';
 
     return {
       action: action === 'erase' ? 'erase' : 'stroke',
@@ -245,13 +434,17 @@
 
   function isDrawableMessage(message) {
     const kind = getMessageKind(message);
-    return kind !== 'cursor' && kind !== 'presence' && kind !== 'leave' && kind !== 'clear' && kind !== 'undo';
+    return kind !== 'cursor' && kind !== 'presence' && kind !== 'leave' && kind !== 'clear' && kind !== 'undo' && kind !== 'noop';
   }
 
   function getOperationKey(operation) {
-    return Number.isFinite(operation.sequence_id)
-      ? `seq:${operation.sequence_id}`
-      : `local:${operation.local_sequence_id}`;
+    if (Number.isFinite(operation.sequence_id)) {
+      return `seq:${operation.sequence_id}`;
+    }
+    if (operation.local_sequence_id) {
+      return `local:${operation.local_sequence_id}`;
+    }
+    return `id:${operation.element_id || operation.stroke_id}`;
   }
 
   function getOperationOrder(operation) {
@@ -265,7 +458,7 @@
   }
 
   function addOperation(operation) {
-    if (operation.points.length === 0) return;
+    if (operation.action !== 'element_add' && operation.points.length === 0) return;
 
     if (Number.isFinite(operation.sequence_id)) {
       latestSequenceId = Math.max(latestSequenceId, operation.sequence_id);
@@ -288,7 +481,6 @@
   }
 
   function drawOperation(operation) {
-    const style = getDrawStyle(operation.action, operation.color, operation.width);
     const shouldDim = highlightUserId && operation.user_id !== highlightUserId;
 
     offscreenCtx.save();
@@ -298,6 +490,19 @@
       offscreenCtx.globalAlpha = 1;
     }
 
+    if (operation.action === 'element_add') {
+      drawElementOn(offscreenCtx, {
+        kind: operation.kind,
+        data: operation.data,
+        style: operation.style,
+        color: operation.color,
+        width: operation.width
+      });
+      offscreenCtx.restore();
+      return;
+    }
+
+    const style = getDrawStyle(operation.action, operation.color, operation.width);
     drawSmoothPoints(offscreenCtx, operation.points, style.color, style.width);
 
     if (highlightUserId && operation.user_id === highlightUserId) {
@@ -351,7 +556,12 @@
     const normalized = rawOperations
       .filter((item) => item && !item._snapshot && isDrawableMessage(item))
       .map((item) => normalizeOperation(item))
-      .filter((operation) => operation.points.length > 0)
+      .filter((operation) => {
+        // 保留 element_add（矩形、椭圆等），它们的坐标在 data 字段中
+        if (operation.action === 'element_add') return true;
+        // 普通笔画必须有 points
+        return operation.points.length > 0;
+      })
       .sort(compareOperations);
 
     normalized.forEach(addOperation);
@@ -621,6 +831,23 @@
     });
   }
 
+  function sendCursorLocal(point) {
+    const now = performance.now();
+    if (!currentCanvasId || now - lastCursorSentAt < 50 || !collector.isConnected()) return;
+
+    lastCursorSentAt = now;
+    // cursor 只做在线状态/光标渲染，不应进入持久化链路（Kafka/Mongo）
+    collector.send({
+      type: 'cursor_local',
+      action: 'cursor_local',
+      canvas_id: currentCanvasId,
+      points: [point],
+      color: colorPicker.value,
+      username: getCurrentUserName(),
+      timestamp: Date.now()
+    });
+  }
+
   function startPresenceTimers() {
     stopPresenceTimers();
     presenceTimerId = setInterval(() => sendPresence('presence'), 5000);
@@ -761,10 +988,34 @@
   }
 
   function setActiveTool(tool) {
-    collector.setTool(tool);
+    activeTool = tool;
+
+    // 图形/文字工具不走 collector 的采集逻辑，但仍复用其 WS 连接与 send()
+    if (isShapeTool(tool)) {
+      collector.setTool('highlighter');
+    } else {
+      collector.setTool(tool);
+    }
+
     penBtn.classList.toggle('active', tool === 'pen');
     eraserBtn.classList.toggle('active', tool === 'eraser');
-    canvas.style.cursor = tool === 'eraser' ? 'cell' : 'crosshair';
+    rectBtn.classList.toggle('active', tool === 'rect');
+    ellipseBtn.classList.toggle('active', tool === 'ellipse');
+    lineBtn.classList.toggle('active', tool === 'line');
+    textBtn.classList.toggle('active', tool === 'text');
+
+    if (tool === 'eraser') {
+      canvas.style.cursor = 'cell';
+    } else if (tool === 'text') {
+      canvas.style.cursor = 'text';
+    } else if (tool === 'rect' || tool === 'ellipse' || tool === 'line') {
+      canvas.style.cursor = 'crosshair';
+    } else {
+      canvas.style.cursor = 'crosshair';
+    }
+
+    previewElement = null;
+    schedulePresent();
   }
 
   function setColor(color) {
@@ -873,6 +1124,10 @@
 
   penBtn.addEventListener('click', () => setActiveTool('pen'));
   eraserBtn.addEventListener('click', () => setActiveTool('eraser'));
+  rectBtn.addEventListener('click', () => setActiveTool('rect'));
+  ellipseBtn.addEventListener('click', () => setActiveTool('ellipse'));
+  lineBtn.addEventListener('click', () => setActiveTool('line'));
+  textBtn.addEventListener('click', () => setActiveTool('text'));
 
   colorSwatches.forEach((swatch) => {
     swatch.addEventListener('click', () => setColor(swatch.dataset.color));
@@ -908,18 +1163,51 @@
 
   canvas.addEventListener('mousedown', (event) => {
     if (!currentCanvasId) return;
+
+    // 文字工具：点击出输入框
+    if (activeTool === 'text') {
+      const point = getCanvasPoint(event);
+      spawnTextEditor(point);
+      return;
+    }
+
+    // 图形工具：开始拖拽
+    if (activeTool === 'rect' || activeTool === 'ellipse' || activeTool === 'line') {
+      elementStartPoint = getCanvasPoint(event);
+      previewElement = {
+        kind: activeTool,
+        data: {
+          x1: elementStartPoint.x,
+          y1: elementStartPoint.y,
+          x2: elementStartPoint.x,
+          y2: elementStartPoint.y
+        },
+        style: buildElementStyle()
+      };
+      schedulePresent();
+      return;
+    }
+
+    // 默认：自由画笔/橡皮擦
     const action = getActiveTool() === 'eraser' ? 'erase' : 'stroke';
     isDrawing = true;
     lastPoint = getCanvasPoint(event);
     drawDotOn(offscreenCtx, lastPoint, action, colorPicker.value, strokeWidth.value);
     schedulePresent();
-    sendCursor(lastPoint);
+    sendCursorLocal(lastPoint);
   });
 
   canvas.addEventListener('mousemove', (event) => {
     if (!currentCanvasId) return;
     const point = getCanvasPoint(event);
-    sendCursor(point);
+    sendCursorLocal(point);
+
+    if (elementStartPoint && previewElement && (activeTool === 'rect' || activeTool === 'ellipse' || activeTool === 'line')) {
+      previewElement.data.x2 = point.x;
+      previewElement.data.y2 = point.y;
+      schedulePresent();
+      return;
+    }
 
     if (!isDrawing || !lastPoint) return;
 
@@ -930,11 +1218,35 @@
   });
 
   canvas.addEventListener('mouseup', () => {
+    if (elementStartPoint && previewElement && currentCanvasId) {
+      const element = {
+        action: 'element_add',
+        canvas_id: currentCanvasId,
+        element_id: crypto.randomUUID(),
+        kind: previewElement.kind,
+        data: { ...previewElement.data },
+        style: { ...previewElement.style },
+        timestamp: Date.now()
+      };
+
+      collector.send(element);
+
+      elementStartPoint = null;
+      previewElement = null;
+      schedulePresent();
+
+      return;
+    }
+
     isDrawing = false;
     lastPoint = null;
   });
 
   canvas.addEventListener('mouseleave', () => {
+    elementStartPoint = null;
+    previewElement = null;
+    schedulePresent();
+
     isDrawing = false;
     lastPoint = null;
   });

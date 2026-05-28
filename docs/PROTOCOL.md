@@ -90,6 +90,81 @@ ws://localhost:3000/ws?canvas_id=<canvas_id>
 }
 ```
 
+#### 绘图元素新增 (element_add)
+
+> 用于同步 Excalidraw 风格的“图形/文字元素”。
+>
+> - `stroke/erase` 仍用于自由绘制（点序列）。
+> - `element_add` 用于一次性落地一个元素（矩形/椭圆/直线/文字）。
+>
+> 说明：第一版只要求 `element_add`。`element_update`/`element_delete` 可后续补齐。
+
+**消息体**：
+
+```json
+{
+  "action": "element_add",
+  "canvas_id": "canvas-001",
+  "element_id": "550e8400-e29b-41d4-a716-4466554400aa",
+  "kind": "rect",
+  "data": {
+    "x1": 120,
+    "y1": 180,
+    "x2": 420,
+    "y2": 360
+  },
+  "style": {
+    "stroke": "#2563eb",
+    "fill": "transparent",
+    "stroke_width": 3,
+    "opacity": 1
+  },
+  "timestamp": 1700000000050
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `action` | string | ✅ | 固定值 `"element_add"` |
+| `canvas_id` | string | ✅ | 画布 ID |
+| `element_id` | string | ✅ | 元素 UUID v4（全局唯一） |
+| `kind` | string | ✅ | 元素类型：`rect`/`ellipse`/`line`/`text` |
+| `data` | object | ✅ | 元素数据，随 `kind` 不同而变化（见下） |
+| `style` | object | ✅ | 元素样式（描边/填充/透明度等） |
+| `timestamp` | number | ✅ | 客户端时间戳（毫秒） |
+
+`data` 字段约定：
+
+- `rect` / `ellipse` / `line`：
+
+```json
+{ "x1": 0, "y1": 0, "x2": 100, "y2": 100 }
+```
+
+- `text`：
+
+```json
+{
+  "x": 200,
+  "y": 150,
+  "text": "Hello SyncCanvas",
+  "font_size": 20,
+  "font_family": "Arial",
+  "align": "left"
+}
+```
+
+`style` 字段约定：
+
+```json
+{
+  "stroke": "#111827",
+  "fill": "transparent",
+  "stroke_width": 3,
+  "opacity": 1
+}
+```
+
 ### 2.3 服务端 → 客户端
 
 #### 广播消息
@@ -485,7 +560,7 @@ GET /api/v1/canvases/:canvas_id/stats
 
 | 字段 | 校验规则 |
 |------|----------|
-| `action` | 必须是 `"stroke"`, `"erase"`, `"cursor"`, `"pong"` 之一 |
+| `action` | 必须是 `"stroke"`, `"erase"`, `"cursor"`, `"pong"`, `"element_add"` 之一 |
 | `canvas_id` | 必须是字符串，非空 |
 | `stroke_id` | 必须是有效的 UUID v4 |
 | `points` | 数组长度 1-1000 |

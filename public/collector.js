@@ -726,8 +726,13 @@ class StrokeCollector extends EventEmitter {
       return;
     }
 
+    const action = this._getAction();
+    if (action === 'noop') {
+      return;
+    }
+
     const segment = {
-      action: this._getAction(),
+      action,
       canvas_id: this.canvasId,
       stroke_id: this.currentStrokeId,
       points: this.currentPoints,
@@ -747,6 +752,14 @@ class StrokeCollector extends EventEmitter {
   emitSegment(isFinal = false) {
     if (this.currentPoints.length === 0) return;
 
+    const action = this._getAction();
+    if (action === 'noop') {
+      if (isFinal) {
+        this.currentPoints = [];
+      }
+      return;
+    }
+
     let pointsToSend = this.currentPoints;
     const originalCount = this.currentPoints.length;
 
@@ -755,7 +768,7 @@ class StrokeCollector extends EventEmitter {
     }
 
     const segment = {
-      action: this._getAction(),
+      action,
       canvas_id: this.canvasId,
       stroke_id: this.currentStrokeId,
       points: isFinal ? pointsToSend : this.currentPoints,
@@ -788,9 +801,14 @@ class StrokeCollector extends EventEmitter {
    */
   _getAction() {
     switch (this.currentTool) {
-      case 'eraser': return 'erase';
-      case 'highlighter': return 'stroke'; // 高亮也是 stroke
-      default: return 'stroke';
+      case 'eraser':
+        return 'erase';
+      case 'highlighter':
+        // 预留：用于“非绘画工具”占位，避免图形/文字操作时误触发自由画笔。
+        // highlighter 不应产生任何可绘制笔画消息。
+        return 'noop';
+      default:
+        return 'stroke';
     }
   }
 
