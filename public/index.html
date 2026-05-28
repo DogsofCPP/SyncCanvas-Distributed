@@ -3,98 +3,67 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SyncCanvas - 分布式协作画布</title>
+  <title>SyncCanvas - 协作白板工作台</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <main class="app-shell">
-    <section id="loginView" class="auth-view" aria-labelledby="loginTitle">
-      <form id="loginForm" class="login-panel">
-        <div class="brand-header">
-          <div class="brand-mark" aria-hidden="true"></div>
-          <div>
-            <h1 id="loginTitle">SyncCanvas</h1>
-            <p id="loginDesc">登录后选择或创建一个协作画布。</p>
-          </div>
+  <div id="app" class="workspace-app">
+    <aside class="workspace-sidebar" aria-label="画布列表">
+      <div class="sidebar-brand">
+        <div class="brand-logo" aria-hidden="true"></div>
+        <div>
+          <div class="brand-name">SyncCanvas</div>
+          <p id="sidebarUserHint">登录后查看和管理你的协作画布</p>
         </div>
-        <div id="loginError" class="form-error" hidden></div>
+      </div>
 
-        <div class="field-grid">
-          <label class="field" for="loginName">
-            <span class="field-label">用户名</span>
-            <input id="loginName" name="loginName" type="text" autocomplete="name" placeholder="输入你的名字" required>
-          </label>
-
-          <label class="field" for="loginPassword">
-            <span class="field-label">密码</span>
-            <input id="loginPassword" name="loginPassword" type="password" autocomplete="current-password" placeholder="输入密码">
-          </label>
-        </div>
-
-        <button class="primary-btn primary-btn-block" type="submit">登录</button>
-
-        <button id="loginToggle" class="text-btn" type="button">没有账号？注册</button>
-      </form>
-    </section>
-
-    <section id="canvasListView" class="canvas-list-view is-hidden" aria-labelledby="canvasListTitle">
-      <div class="canvas-list-panel">
-        <div class="panel-heading">
-          <div class="panel-title">
-            <div class="brand-mark small" aria-hidden="true"></div>
-            <div>
-              <h1 id="canvasListTitle">画布列表</h1>
-              <p>欢迎，<span id="currentUserName">-</span></p>
-            </div>
-          </div>
-          <button id="logoutBtn" class="ghost-btn" type="button">退出</button>
-        </div>
-
+      <div id="canvasControls" class="canvas-controls">
         <div class="create-canvas">
           <input id="newCanvasName" type="text" placeholder="新画布名称">
-          <button id="createCanvasBtn" class="primary-btn" type="button">创建新画布</button>
+          <button id="createCanvasBtn" class="primary-btn" type="button">创建</button>
+        </div>
+      </div>
+
+      <section id="canvasListView" class="canvas-list-view" aria-labelledby="canvasListTitle">
+        <div class="panel-heading">
+          <div>
+            <h2 id="canvasListTitle">协作画布</h2>
+            <p>当前用户：<span id="currentUserName">访客</span></p>
+          </div>
+          <button id="refreshDrawCanvasesBtn" class="icon-btn" type="button" title="刷新画布列表" aria-label="刷新画布列表">↻</button>
         </div>
 
         <div id="canvasListLoading" class="canvas-list-loading" hidden>加载中...</div>
         <div id="canvasListError" class="canvas-list-error" hidden></div>
         <div id="canvasItems" class="canvas-items" aria-live="polite"></div>
-      </div>
-    </section>
+        <div id="drawCanvasItems" class="draw-canvas-items is-hidden" aria-live="polite"></div>
+      </section>
+    </aside>
 
-    <section id="drawView" class="draw-view is-hidden" aria-label="协作画布">
-      <aside class="draw-sidebar draw-sidebar-left" aria-label="画板列表">
-        <div class="sidebar-header">
-          <div>
-            <h2>画板</h2>
-            <p>点击切换画布</p>
-          </div>
-          <button id="refreshDrawCanvasesBtn" class="icon-text-btn" type="button">刷新</button>
+    <main class="workspace-main">
+      <header class="workspace-topbar">
+        <div class="current-board-info">
+          <strong id="currentCanvasLabel">未选择画布</strong>
+          <span id="workspaceEyebrow">选择左侧画布开始协作</span>
         </div>
-        <div id="drawCanvasItems" class="draw-canvas-items" aria-live="polite"></div>
-      </aside>
 
-      <div class="draw-main">
-        <div id="toolbar" aria-label="画布工具栏">
-          <div class="toolbar-group toolbar-meta">
-            <button class="tool-btn" id="backToListBtn" type="button" title="返回画布列表">返回</button>
-            <span id="currentCanvasLabel" class="canvas-label">未选择画布</span>
-          </div>
-
+        <div id="toolbar" class="draw-toolbar toolbar-disabled" aria-label="绘图工具栏">
           <div class="toolbar-group">
+            <button class="tool-btn select-tool" type="button" title="选择">选择</button>
             <button class="tool-btn active" id="penBtn" type="button" title="画笔">画笔</button>
             <button class="tool-btn" id="eraserBtn" type="button" title="橡皮擦">橡皮擦</button>
-            <span class="toolbar-divider" aria-hidden="true"></span>
             <button class="tool-btn" id="rectBtn" type="button" title="矩形">矩形</button>
-            <button class="tool-btn" id="ellipseBtn" type="button" title="圆 / 椭圆">圆形</button>
+            <button class="tool-btn" id="ellipseBtn" type="button" title="圆形">圆形</button>
             <button class="tool-btn" id="lineBtn" type="button" title="直线">直线</button>
             <button class="tool-btn" id="textBtn" type="button" title="文字">文字</button>
           </div>
 
-          <div class="toolbar-group color-panel" aria-label="颜色面板">
+          <div class="toolbar-group color-panel" aria-label="颜色选择">
             <button class="color-swatch active" type="button" data-color="#000000" style="--swatch:#000000" aria-label="黑色"></button>
             <button class="color-swatch" type="button" data-color="#ef4444" style="--swatch:#ef4444" aria-label="红色"></button>
             <button class="color-swatch" type="button" data-color="#2563eb" style="--swatch:#2563eb" aria-label="蓝色"></button>
             <button class="color-swatch" type="button" data-color="#16a34a" style="--swatch:#16a34a" aria-label="绿色"></button>
+            <button class="color-swatch" type="button" data-color="#7c3aed" style="--swatch:#7c3aed" aria-label="紫色"></button>
             <button class="color-swatch" type="button" data-color="#f59e0b" style="--swatch:#f59e0b" aria-label="橙色"></button>
             <label class="color-control" title="自定义颜色">
               <span>颜色</span>
@@ -102,35 +71,104 @@
             </label>
           </div>
 
-          <label class="width-control" title="线条粗细">
+          <label class="width-control" title="画笔粗细">
             <span>粗细</span>
-            <input type="range" id="strokeWidth" min="1" max="50" value="3" aria-label="线条粗细">
+            <input type="range" id="strokeWidth" min="1" max="50" value="3" aria-label="画笔粗细">
             <output id="widthValue" for="strokeWidth">3</output>
           </label>
 
-          <div class="toolbar-group">
+          <div class="toolbar-group toolbar-actions">
             <button class="tool-btn" id="undoBtn" type="button" title="撤销">撤销</button>
-            <button class="tool-btn danger" id="clearBtn" type="button" title="清空画布（同步清除所有用户）">清空</button>
+            <button class="tool-btn danger" id="clearBtn" type="button" title="清空画布">清空</button>
           </div>
         </div>
 
-        <canvas id="canvas" aria-label="协作画布"></canvas>
-        <div id="cursorLayer" aria-hidden="true"></div>
-
-        <div id="status" aria-live="polite">
-          状态: <span id="wsStatus" class="disconnected">未连接</span>
-          <span class="divider">|</span>
-          重放: <span id="replayStatus">未开始</span>
-          <span class="divider">|</span>
-          用户: <span id="userId">-</span>
-          <span class="divider">|</span>
-          在线: <span id="onlineCount">0</span>
-          <span class="divider">|</span>
-          序列: <span id="sequenceId">0</span>
+        <div id="topbarAuth" class="topbar-user-area">
+          <button id="topLoginBtn" class="primary-btn" type="button">登录 / 注册</button>
+          <div id="topUserInfo" class="top-user-info is-hidden">
+            <span id="topUserName">-</span>
+            <button id="logoutBtn" class="ghost-btn" type="button">退出</button>
+          </div>
         </div>
-      </div>
+      </header>
 
-      <aside class="draw-sidebar draw-sidebar-right" aria-label="在线用户">
+      <section id="welcomePanel" class="welcome-panel">
+        <div class="welcome-content">
+          <span class="welcome-kicker">企业级协作白板</span>
+          <h1>欢迎使用 <span>SyncCanvas</span></h1>
+          <p class="welcome-subtitle">选择左侧画布开始实时协作绘画</p>
+          <p class="welcome-desc">与团队成员一起在无限画布上自由创作，实时同步每一个想法。</p>
+          <button id="welcomeStartBtn" class="primary-btn welcome-main-btn" type="button">选择画布开始</button>
+
+          <div class="feature-grid">
+            <article>
+              <strong>实时协作</strong>
+              <span>多人同时在线编辑，每一次笔触都实时同步。</span>
+            </article>
+            <article>
+              <strong>操作同步</strong>
+              <span>基于 WebSocket 的低延迟操作同步与广播。</span>
+            </article>
+            <article>
+              <strong>历史回放</strong>
+              <span>完整记录每一步操作，支持回溯与重放。</span>
+            </article>
+            <article>
+              <strong>多人在线</strong>
+              <span>支持团队成员同时在线，高效沟通与协作。</span>
+            </article>
+          </div>
+
+          <div class="welcome-tip">小贴士：选择左侧任意画布即可进入编辑；若未登录，系统将提示您登录或注册。</div>
+        </div>
+      </section>
+
+      <section id="drawView" class="draw-view canvas-panel is-hidden" aria-label="协作画布">
+        <div class="draw-main">
+          <canvas id="canvas" aria-label="协作画布"></canvas>
+          <div id="cursorLayer" aria-hidden="true"></div>
+        </div>
+      </section>
+
+      <footer id="status" class="workspace-status-bar status-bar" aria-live="polite">
+        状态: <span id="wsStatus" class="disconnected">未连接</span>
+        <span class="divider">|</span>
+        重放: <span id="replayStatus">未开始</span>
+        <span class="divider">|</span>
+        用户: <span id="userId">-</span>
+        <span class="divider">|</span>
+        在线: <span id="onlineCount">0</span>
+        <span class="divider">|</span>
+        序列: <span id="sequenceId">0</span>
+      </footer>
+    </main>
+
+    <aside class="workspace-right-panel" aria-label="协作信息">
+      <section id="introPanel" class="right-intro-panel">
+        <div class="right-panel-top">
+          <span class="panel-kicker">协作看板</span>
+          <h2>未登录或未选择画布</h2>
+          <p>登录后或选择画布后即可查看在线成员并开启实时协作。</p>
+        </div>
+        <div class="board-illustration" aria-hidden="true">
+          <div></div>
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+        <div id="loginUnlockCard" class="right-login-card">
+          <strong>登录以解锁全部功能</strong>
+          <p>登录后即可创建、编辑并邀请团队成员一起协作。</p>
+          <button id="rightLoginBtn" class="primary-btn primary-btn-block" type="button">登录 / 注册</button>
+        </div>
+        <div id="loggedInHintCard" class="right-login-card logged-in-hint-card is-hidden">
+          <strong>已登录</strong>
+          <p>当前用户：<span id="rightCurrentUsername">-</span></p>
+          <p>请选择左侧画布开始协作，或创建一个新的画布。</p>
+        </div>
+      </section>
+
+      <section id="onlineUsersPanel" class="online-users-panel is-hidden">
         <div class="sidebar-header">
           <div>
             <h2>在线用户</h2>
@@ -139,9 +177,41 @@
           <span id="sideOnlineCount" class="sidebar-count">0</span>
         </div>
         <div id="onlineUserItems" class="online-user-items" aria-live="polite"></div>
-      </aside>
-    </section>
-  </main>
+      </section>
+    </aside>
+
+    <div id="authModal" class="auth-modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+      <div id="authOverlay" class="auth-overlay" aria-hidden="true"></div>
+      <section id="loginView" class="auth-view" aria-labelledby="loginTitle">
+        <form id="loginForm" class="login-panel auth-card">
+          <button id="authCloseBtn" class="auth-close-btn" type="button" aria-label="关闭登录弹窗">×</button>
+          <div class="brand-header">
+            <div class="brand-logo" aria-hidden="true"></div>
+            <div>
+              <h1 id="loginTitle">SyncCanvas</h1>
+              <p id="loginDesc">登录后选择或创建一个协作画布。</p>
+            </div>
+          </div>
+          <div id="loginError" class="form-error" hidden></div>
+
+          <div class="field-grid">
+            <label class="field" for="loginName">
+              <span class="field-label">用户名</span>
+              <input id="loginName" name="loginName" type="text" autocomplete="username" placeholder="输入你的名字" required>
+            </label>
+
+            <label class="field" for="loginPassword">
+              <span class="field-label">密码</span>
+              <input id="loginPassword" name="loginPassword" type="password" autocomplete="current-password" placeholder="输入密码">
+            </label>
+          </div>
+
+          <button class="primary-btn primary-btn-block" type="submit">登录</button>
+          <button id="loginToggle" class="text-btn" type="button">没有账号？注册</button>
+        </form>
+      </section>
+    </div>
+  </div>
 
   <script src="collector.js"></script>
   <script src="draw.js"></script>

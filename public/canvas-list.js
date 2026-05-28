@@ -9,24 +9,42 @@
   const STORAGE_USER = 'synccanvas.user';
   const STORAGE_META = 'synccanvas.canvasMeta';
 
-  const loginView = document.getElementById('loginView');
-  const canvasListView = document.getElementById('canvasListView');
-  const drawView = document.getElementById('drawView');
+  const authModal = document.getElementById('authModal');
+  const authOverlay = document.getElementById('authOverlay');
+  const authCloseBtn = document.getElementById('authCloseBtn');
   const loginForm = document.getElementById('loginForm');
   const loginName = document.getElementById('loginName');
   const loginPassword = document.getElementById('loginPassword');
   const loginError = document.getElementById('loginError');
   const loginToggle = document.getElementById('loginToggle');
+  const loginTitle = document.getElementById('loginTitle');
+  const loginDesc = document.getElementById('loginDesc');
   const currentUserName = document.getElementById('currentUserName');
+  const topLoginBtn = document.getElementById('topLoginBtn');
+  const rightLoginBtn = document.getElementById('rightLoginBtn');
+  const topUserInfo = document.getElementById('topUserInfo');
+  const topUserName = document.getElementById('topUserName');
   const logoutBtn = document.getElementById('logoutBtn');
+  const sidebarUserHint = document.getElementById('sidebarUserHint');
+  const canvasControls = document.getElementById('canvasControls');
   const newCanvasName = document.getElementById('newCanvasName');
   const createCanvasBtn = document.getElementById('createCanvasBtn');
   const canvasItems = document.getElementById('canvasItems');
   const canvasListLoading = document.getElementById('canvasListLoading');
   const canvasListError = document.getElementById('canvasListError');
-  const backToListBtn = document.getElementById('backToListBtn');
   const drawCanvasItems = document.getElementById('drawCanvasItems');
   const refreshDrawCanvasesBtn = document.getElementById('refreshDrawCanvasesBtn');
+  const welcomePanel = document.getElementById('welcomePanel');
+  const drawView = document.getElementById('drawView');
+  const introPanel = document.getElementById('introPanel');
+  const onlineUsersPanel = document.getElementById('onlineUsersPanel');
+  const toolbar = document.getElementById('toolbar');
+  const workspaceEyebrow = document.getElementById('workspaceEyebrow');
+  const currentCanvasLabel = document.getElementById('currentCanvasLabel');
+  const welcomeStartBtn = document.getElementById('welcomeStartBtn');
+  const loginUnlockCard = document.getElementById('loginUnlockCard');
+  const loggedInHintCard = document.getElementById('loggedInHintCard');
+  const rightCurrentUsername = document.getElementById('rightCurrentUsername');
 
   let token = localStorage.getItem(STORAGE_TOKEN) || null;
   let currentUser = null;
@@ -73,10 +91,89 @@
     return data;
   }
 
-  function showOnly(view) {
-    loginView.classList.toggle('is-hidden', view !== 'login');
-    canvasListView.classList.toggle('is-hidden', view !== 'list');
-    drawView.classList.toggle('is-hidden', view !== 'draw');
+  function isLoggedIn() {
+    return Boolean(token && currentUser);
+  }
+
+  function showWorkspace() {
+    document.getElementById('app').classList.remove('is-hidden');
+  }
+
+  function showWelcomeState() {
+    currentCanvasId = null;
+    welcomePanel.classList.remove('is-hidden');
+    drawView.classList.add('is-hidden');
+    introPanel.classList.remove('is-hidden');
+    onlineUsersPanel.classList.add('is-hidden');
+    toolbar.classList.add('toolbar-disabled');
+    currentCanvasLabel.textContent = '未选择画布';
+    workspaceEyebrow.textContent = '选择左侧画布开始协作';
+    updateRightPanelAuthState();
+    renderCanvasList(latestCanvases);
+  }
+
+  function showCanvasState(canvas) {
+    const canvasId = getCanvasId(canvas);
+    currentCanvasId = canvasId;
+    welcomePanel.classList.add('is-hidden');
+    drawView.classList.remove('is-hidden');
+    introPanel.classList.add('is-hidden');
+    onlineUsersPanel.classList.remove('is-hidden');
+    toolbar.classList.remove('toolbar-disabled');
+    currentCanvasLabel.textContent = canvas.name || canvasId;
+    workspaceEyebrow.textContent = '当前画布';
+    updateRightPanelAuthState();
+    renderCanvasList(latestCanvases);
+  }
+
+  function updateRightPanelAuthState() {
+    const hasCanvasSelected = Boolean(currentCanvasId);
+
+    introPanel.classList.toggle('is-hidden', hasCanvasSelected);
+    onlineUsersPanel.classList.toggle('is-hidden', !hasCanvasSelected);
+
+    if (hasCanvasSelected) return;
+
+    const loggedIn = isLoggedIn();
+    loginUnlockCard.classList.toggle('is-hidden', loggedIn);
+    loggedInHintCard.classList.toggle('is-hidden', !loggedIn);
+    rightCurrentUsername.textContent = loggedIn ? currentUser.username : '-';
+  }
+
+  function setAuthMode(mode) {
+    isRegisterMode = mode === 'register';
+    loginTitle.textContent = isRegisterMode ? '注册 SyncCanvas' : 'SyncCanvas';
+    loginForm.querySelector('button[type="submit"]').textContent = isRegisterMode ? '注册' : '登录';
+    loginToggle.textContent = isRegisterMode ? '已有账号？登录' : '没有账号？注册';
+    loginDesc.textContent = isRegisterMode
+      ? '注册后可以创建和管理自己的协作画布。'
+      : '登录后选择或创建一个协作画布。';
+    loginPassword.placeholder = isRegisterMode ? '输入密码（6 位以上）' : '输入密码';
+  }
+
+  function openAuthModal(mode = 'login') {
+    setAuthMode(mode);
+    clearLoginError();
+    authModal.classList.remove('is-hidden');
+    window.setTimeout(() => loginName.focus(), 0);
+  }
+
+  function closeAuthModal() {
+    authModal.classList.add('is-hidden');
+    clearLoginError();
+  }
+
+  function updateAuthUI() {
+    const loggedIn = isLoggedIn();
+    topLoginBtn.classList.toggle('is-hidden', loggedIn);
+    topUserInfo.classList.toggle('is-hidden', !loggedIn);
+    canvasControls.classList.remove('is-hidden');
+    currentUserName.textContent = loggedIn ? currentUser.username : '访客';
+    topUserName.textContent = loggedIn ? currentUser.username : '-';
+    sidebarUserHint.textContent = loggedIn
+      ? `欢迎回来，${currentUser.username}`
+      : '登录后查看和管理你的协作画布';
+    updateRightPanelAuthState();
   }
 
   function showLoginError(message) {
@@ -110,6 +207,8 @@
       localStorage.removeItem(STORAGE_TOKEN);
       localStorage.removeItem(STORAGE_USER);
     }
+
+    updateAuthUI();
   }
 
   function loadAuth() {
@@ -131,23 +230,17 @@
   function logout() {
     setAuth(null, null);
     window.SyncCanvasDraw.disconnectCanvas();
-    currentCanvasId = null;
+    latestCanvases = [];
     loginName.value = '';
     loginPassword.value = '';
     clearLoginError();
+    renderCanvasList([]);
     renderDrawCanvasList();
-    showOnly('login');
+    showWelcomeState();
   }
 
   function toggleLoginMode() {
-    isRegisterMode = !isRegisterMode;
-    loginForm.querySelector('h1').textContent = isRegisterMode ? '注册 SyncCanvas' : 'SyncCanvas';
-    loginForm.querySelector('button[type="submit"]').textContent = isRegisterMode ? '注册' : '登录';
-    loginToggle.textContent = isRegisterMode ? '已有账号？登录' : '没有账号？注册';
-    document.getElementById('loginDesc').textContent = isRegisterMode
-      ? '注册后可以创建和管理自己的画布。'
-      : '登录后选择或创建一个协作画布。';
-    loginPassword.placeholder = isRegisterMode ? '输入密码（6 位以上）' : '输入密码';
+    setAuthMode(isRegisterMode ? 'login' : 'register');
     clearLoginError();
   }
 
@@ -178,6 +271,7 @@
         user_id: data.data.user_id,
         username: data.data.username
       });
+      closeAuthModal();
       await showCanvasList();
     } catch (error) {
       showLoginError(error.message);
@@ -192,15 +286,17 @@
   }
 
   async function showCanvasList() {
-    if (!token) {
-      showOnly('login');
+    showWelcomeState();
+    updateAuthUI();
+    clearListError();
+
+    if (!isLoggedIn()) {
+      canvasItems.innerHTML = '';
+      renderDrawCanvasList();
       return;
     }
 
-    showOnly('list');
-    currentUserName.textContent = currentUser?.username || '-';
     canvasItems.innerHTML = '';
-    clearListError();
     canvasListLoading.hidden = false;
 
     try {
@@ -209,6 +305,7 @@
       showListError(`加载画布列表失败: ${error.message}`);
       if (/401|认证|令牌|token/i.test(error.message)) {
         logout();
+        openAuthModal('login');
       }
     } finally {
       canvasListLoading.hidden = true;
@@ -216,9 +313,13 @@
   }
 
   async function refreshDrawCanvases() {
-    if (!token) return;
+    if (!isLoggedIn()) {
+      openAuthModal('login');
+      return;
+    }
+
     try {
-      await fetchCanvases();
+      renderCanvasList(await fetchCanvases());
     } catch (error) {
       renderDrawCanvasList(`加载失败: ${error.message}`);
     }
@@ -245,9 +346,9 @@
   }
 
   function formatDate(value) {
-    if (!value) return '-';
+    if (!value) return '暂无修改';
     const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return '-';
+    if (Number.isNaN(date.getTime())) return '暂无修改';
     return date.toLocaleString('zh-CN', {
       year: 'numeric',
       month: '2-digit',
@@ -266,31 +367,49 @@
   function renderCanvasList(canvases) {
     canvasItems.innerHTML = '';
 
-    if (canvases.length === 0) {
+    if (!isLoggedIn()) {
+      return;
+    }
+
+    const visibleCanvases = sortedCanvases(canvases);
+
+    if (visibleCanvases.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'empty-state';
-      empty.textContent = '还没有画布，创建一个开始吧。';
+      empty.textContent = '还没有画布，创建一个开始协作吧。';
       canvasItems.appendChild(empty);
       return;
     }
 
-    sortedCanvases(canvases).forEach((canvas) => {
+    visibleCanvases.forEach((canvas, index) => {
       const canvasId = getCanvasId(canvas);
       const isOwner = currentUser && canvas.owner_id === currentUser.user_id;
       const localMeta = canvasMeta[canvasId] || {};
       const operationCount = canvas.total_operations ?? canvas.operation_count ?? localMeta.operationCount;
       const latestSeq = canvas.latest_sequence_id ?? canvas.latestSequenceId ?? localMeta.latestSequenceId;
+      const collaboratorCount = Math.max(1, Number(canvas.collaborator_count || canvas.member_count || 1));
 
-      const item = document.createElement('div');
+      const item = document.createElement('article');
       item.className = 'canvas-item';
+      item.classList.toggle('active', canvasId === currentCanvasId);
       item.innerHTML = `
+        <div class="canvas-thumb" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
         <div class="canvas-info">
-          <strong class="canvas-name"></strong>
-          <div class="canvas-meta-grid">
-            <span class="canvas-meta canvas-id"></span>
-            <span class="canvas-meta canvas-created"></span>
-            <span class="canvas-meta canvas-updated"></span>
-            <span class="canvas-meta canvas-extra"></span>
+          <div class="canvas-card-header">
+            <strong class="canvas-name"></strong>
+            <span class="canvas-status">协作中</span>
+          </div>
+          <span class="canvas-updated"></span>
+          <div class="canvas-card-footer">
+            <span class="canvas-avatar-group" aria-hidden="true">
+              <i>${initialFor(canvas.name || canvasId)}</i>
+              <i>${initialFor(currentUser?.username || 'U')}</i>
+            </span>
+            <span class="canvas-extra"></span>
           </div>
         </div>
         <div class="canvas-actions">
@@ -300,24 +419,32 @@
       `;
 
       item.querySelector('.canvas-name').textContent = canvas.name || canvasId;
-      item.querySelector('.canvas-id').textContent = `ID: ${canvasId}`;
-      item.querySelector('.canvas-created').textContent = `创建: ${formatDate(getCreatedAt(canvas))}`;
-      item.querySelector('.canvas-updated').textContent = `最后修改: ${formatDate(getUpdatedAt(canvas))}`;
+      item.querySelector('.canvas-updated').textContent = `最后修改 ${formatDate(getUpdatedAt(canvas))}`;
       item.querySelector('.canvas-extra').textContent = [
-        isOwner ? '我创建的' : '协作画布',
+        `${collaboratorCount} 人协作`,
         operationCount != null ? `${operationCount} 次操作` : null,
-        latestSeq != null ? `序列 ${latestSeq}` : null
+        latestSeq != null ? `序列 ${latestSeq}` : null,
+        isOwner ? '我创建的' : null
       ].filter(Boolean).join(' · ');
 
+      item.style.setProperty('--thumb-hue', String((index * 46) % 360));
       item.querySelector('.canvas-enter-btn').addEventListener('click', () => enterCanvas(canvas));
+      item.addEventListener('dblclick', () => enterCanvas(canvas));
 
       const deleteBtn = item.querySelector('.canvas-delete-btn');
       if (deleteBtn) {
-        deleteBtn.addEventListener('click', () => handleDeleteCanvas(canvas, item));
+        deleteBtn.addEventListener('click', (event) => {
+          event.stopPropagation();
+          handleDeleteCanvas(canvas, item);
+        });
       }
 
       canvasItems.appendChild(item);
     });
+  }
+
+  function initialFor(value) {
+    return String(value || 'S').trim().slice(0, 1).toUpperCase();
   }
 
   function renderDrawCanvasList(errorMessage) {
@@ -331,38 +458,22 @@
       return;
     }
 
-    if (!latestCanvases.length) {
-      const empty = document.createElement('div');
-      empty.className = 'sidebar-empty';
-      empty.textContent = token ? '暂无画板' : '登录后显示画板';
-      drawCanvasItems.appendChild(empty);
+    if (!isLoggedIn()) {
+      canvasItems.innerHTML = '';
       return;
     }
 
-    sortedCanvases(latestCanvases).forEach((canvas) => {
-      const canvasId = getCanvasId(canvas);
-      const item = document.createElement('button');
-      item.className = 'draw-canvas-card';
-      item.type = 'button';
-      item.classList.toggle('active', canvasId === currentCanvasId);
-      item.innerHTML = `
-        <strong></strong>
-        <span></span>
-      `;
-      item.querySelector('strong').textContent = canvas.name || canvasId;
-      item.querySelector('span').textContent = `最后修改 ${formatDate(getUpdatedAt(canvas))}`;
-      item.addEventListener('click', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        enterCanvas(canvas);
-      });
-      drawCanvasItems.appendChild(item);
-    });
+    renderCanvasList(latestCanvases);
   }
 
   async function handleDeleteCanvas(canvas, itemElement) {
     const canvasId = getCanvasId(canvas);
-    if (!window.confirm(`确定要删除画布 "${canvas.name}" 吗？此操作不可恢复。`)) return;
+    if (!isLoggedIn()) {
+      openAuthModal('login');
+      return;
+    }
+
+    if (!window.confirm(`确定要删除画布 "${canvas.name || canvasId}" 吗？此操作不可恢复。`)) return;
 
     itemElement.style.opacity = '0.5';
     itemElement.style.pointerEvents = 'none';
@@ -373,7 +484,10 @@
       saveCanvasMeta();
       latestCanvases = latestCanvases.filter((item) => getCanvasId(item) !== canvasId);
       renderCanvasList(latestCanvases);
-      renderDrawCanvasList();
+      if (currentCanvasId === canvasId) {
+        window.SyncCanvasDraw.disconnectCanvas();
+        showWelcomeState();
+      }
     } catch (error) {
       itemElement.style.opacity = '1';
       itemElement.style.pointerEvents = 'auto';
@@ -382,6 +496,11 @@
   }
 
   async function handleCreateCanvas() {
+    if (!isLoggedIn()) {
+      openAuthModal('login');
+      return;
+    }
+
     const name = newCanvasName.value.trim();
     createCanvasBtn.disabled = true;
     createCanvasBtn.textContent = '创建中...';
@@ -401,24 +520,32 @@
       await showCanvasList();
     } catch (error) {
       window.alert(`创建画布失败: ${error.message}`);
+      if (/401|认证|令牌|token/i.test(error.message)) {
+        logout();
+        openAuthModal('login');
+      }
     } finally {
       createCanvasBtn.disabled = false;
-      createCanvasBtn.textContent = '创建新画布';
+      createCanvasBtn.textContent = '创建';
     }
   }
 
   function enterCanvas(canvas) {
-    const canvasId = getCanvasId(canvas);
-    currentCanvasId = canvasId;
-    showOnly('draw');
-    renderDrawCanvasList();
-    window.SyncCanvasDraw.openCanvas(canvasId, canvas.name || canvasId);
+    if (!isLoggedIn()) {
+      openAuthModal('login');
+      return;
+    }
+
+    showCanvasState(canvas);
+    window.SyncCanvasDraw.openCanvas(getCanvasId(canvas), canvas.name || getCanvasId(canvas));
   }
 
   function enterCanvasById(canvasId) {
     const canvas = latestCanvases.find((item) => getCanvasId(item) === canvasId);
     if (canvas) {
       enterCanvas(canvas);
+    } else if (!isLoggedIn()) {
+      openAuthModal('login');
     }
   }
 
@@ -431,39 +558,61 @@
       operationCount: Number(current.operationCount || 0) + 1
     };
     saveCanvasMeta();
-    renderDrawCanvasList();
+    renderCanvasList(latestCanvases);
   }
 
   loginForm.addEventListener('submit', handleAuth);
   loginToggle.addEventListener('click', toggleLoginMode);
   createCanvasBtn.addEventListener('click', handleCreateCanvas);
+  topLoginBtn.addEventListener('click', () => openAuthModal('login'));
+  rightLoginBtn.addEventListener('click', () => openAuthModal('login'));
+  welcomeStartBtn.addEventListener('click', () => {
+    if (!isLoggedIn()) {
+      openAuthModal('login');
+      return;
+    }
+    newCanvasName.focus();
+  });
+  authCloseBtn.addEventListener('click', closeAuthModal);
+  authOverlay.addEventListener('click', closeAuthModal);
   newCanvasName.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
       handleCreateCanvas();
     }
   });
-  backToListBtn.addEventListener('click', () => {
-    window.SyncCanvasDraw.disconnectCanvas();
-    currentCanvasId = null;
-    showCanvasList();
-  });
   logoutBtn.addEventListener('click', logout);
   refreshDrawCanvasesBtn.addEventListener('click', refreshDrawCanvases);
 
-  window.addEventListener('synccanvas:canvas-opened', (event) => {
-    currentCanvasId = event.detail.canvasId;
-    renderDrawCanvasList();
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !authModal.classList.contains('is-hidden')) {
+      closeAuthModal();
+    }
   });
 
-  if (loadAuth() && token) {
+  window.addEventListener('synccanvas:canvas-opened', (event) => {
+    currentCanvasId = event.detail.canvasId;
+    renderCanvasList(latestCanvases);
+  });
+
+  loadAuth();
+  showWorkspace();
+  updateAuthUI();
+  showWelcomeState();
+  if (isLoggedIn()) {
     showCanvasList();
   } else {
     renderDrawCanvasList();
-    showOnly('login');
   }
 
   window.SyncCanvasApp = {
     logout,
+    showWorkspace,
+    showWelcomeState,
+    showCanvasState,
+    openAuthModal,
+    closeAuthModal,
+    updateAuthUI,
+    updateRightPanelAuthState,
     showCanvasList,
     refreshCanvases: showCanvasList,
     refreshDrawCanvases,
@@ -473,6 +622,6 @@
     getCanvases: () => latestCanvases.slice(),
     getToken: () => token,
     getCurrentUser: () => currentUser,
-    isLoggedIn: () => Boolean(token)
+    isLoggedIn
   };
 }());
