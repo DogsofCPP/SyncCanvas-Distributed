@@ -8,7 +8,7 @@
  */
 
 const url = require('url');
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID } = require('crypto');
 const {
   createCanvas,
   findCanvasById,
@@ -31,7 +31,7 @@ async function handleCreateCanvas(req, res, query) {
   }
 
   const { name } = data;
-  const canvasId = 'canvas-' + uuidv4().replace(/-/g, '').slice(0, 12);
+  const canvasId = 'canvas-' + randomUUID().replace(/-/g, '').slice(0, 12);
   const canvasName = (name && typeof name === 'string' && name.trim())
     ? name.trim()
     : '未命名画布';

@@ -1,0 +1,4 @@
+Method,Name,Error,Occurrences,First Seen,Last Seen
+WS,connect,WebSocketTimeoutException('Connection timed out'),15,2026-05-31T06:51:38Z,2026-05-31T06:51:38Z
+WS,receive,WebSocketTimeoutException('Connection timed out'),34,2026-05-31T06:51:17Z,2026-05-31T06:51:56Z
+WS,connect,TimeoutError('timed out'),29,2026-05-31T06:51:22Z,2026-05-31T06:51:56Z

@@ -6,7 +6,7 @@
 
 const url = require('url');
 const bcrypt = require('bcryptjs');
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID } = require('crypto');
 const { createUser, findUserByUsername } = require('../auth-mongo');
 const { generateToken } = require('../middleware/auth');
 
@@ -49,7 +49,7 @@ async function handleRegister(req, res, body) {
       return;
     }
 
-    const userId = 'user-' + uuidv4().replace(/-/g, '').slice(0, 12);
+    const userId = 'user-' + randomUUID().replace(/-/g, '').slice(0, 12);
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 
     await createUser(userId, trimmedUsername, passwordHash);
