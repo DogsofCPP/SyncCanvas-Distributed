@@ -1035,25 +1035,14 @@
   }
 
   function undoLastOperation() {
-    const operation = [...operations]
-      .filter((op) => op.user_id === currentUserId)
-      .sort(compareOperations)
-      .pop();
+    if (!operations.some((op) => op.user_id === currentUserId)) return;
 
-    if (!operation) return;
-
+    // 不传 stroke_id，服务器根据 canvas_id + user_id 查找 created_at 最新的一条操作并删除
     collector.send({
       type: 'undo',
       canvas_id: currentCanvasId,
-      action: 'undo',
-      stroke_id: operation.stroke_id
+      action: 'undo'
     });
-
-    const index = operations.findIndex((op) => op.stroke_id === operation.stroke_id);
-    if (index >= 0) operations.splice(index, 1);
-    redrawCanvas();
-    updateUndoButton();
-    window.SyncCanvasApp?.markCanvasModified?.(currentCanvasId, Date.now(), latestSequenceId);
   }
 
   async function openCanvas(canvasId, canvasName) {

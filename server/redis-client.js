@@ -188,6 +188,43 @@ async function getCachedLatestSeqId(canvasId) {
 }
 
 /**
+ * 从 Redis 缓存中撤销用户的最新一条操作（按 sequence_id 降序，取最新）
+ *
+ * @param {string} canvasId 画布 ID
+ * @param {string} userId   用户 ID
+ * @returns {Promise<object|null>} 被删除的缓存条目 JSON，若无则返回 null
+ */
+async function undoLastUserStroke(canvasId, userId) {
+  const key = `canvas:${canvasId}`;
+
+  const raw = await redisClient.lrange(key, 0, -1);
+  if (!raw || raw.length === 0) return null;
+
+  const parsed = raw
+    .map(item => {
+      try { return JSON.parse(item); } catch { return null; }
+    })
+    .filter(Boolean)
+    .filter(op => {
+      if (op.user_id !== userId) return false;
+      const kind = op.msg_type || op.action || op.type;
+      return kind !== 'undo' && kind !== 'clear' && kind !== 'noop' && kind !== 'cursor' && kind !== 'presence' && kind !== 'leave';
+    })
+    .sort((a, b) => (b.sequence_id || 0) - (a.sequence_id || 0));
+
+  if (parsed.length === 0) return null;
+
+  const target = parsed[0];
+
+  // 用 LREM 精确删除一条（匹配 JSON 序列化后的字符串）
+  const serialized = JSON.stringify(target);
+  const removed = await redisClient.lrem(key, 1, serialized);
+  if (removed === 0) return null;
+
+  return target;
+}
+
+/**
  * 关闭 Redis 连接
  */
 async function closeRedis() {
@@ -208,6 +245,7 @@ module.exports = {
   cacheStrokeOperation,
   getCachedOperations,
   getCachedLatestSeqId,
+  undoLastUserStroke,
   closeRedis,
   _redisClient: redisClient,
 };

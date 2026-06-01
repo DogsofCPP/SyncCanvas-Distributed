@@ -29,6 +29,7 @@ const {
   cacheStrokeOperation,
   getCachedOperations,
   getCachedLatestSeqId,
+  undoLastUserStroke,
   closeRedis,
   _redisClient,
 } = require('./redis-client');
@@ -588,32 +589,20 @@ async function handleClientMessage(userId, canvasId, data) {
     return;
   }
 
-  // 处理单个笔画撤销操作（只允许撤销自己的笔画）
+  // 处理撤销操作（撤销当前用户在当前画布上的最新一条操作）
   if (message.type === 'undo' || message.action === 'undo') {
-    const strokeId = message.stroke_id;
-    if (!strokeId) {
-      console.warn(`[Undo] 缺少 stroke_id`);
+    // 查询 Redis 缓存（实时数据），找到该用户在画布上的最新一条可撤销操作并从缓存删除
+    const deletedStroke = await undoLastUserStroke(canvasId, userId);
+
+    if (!deletedStroke) {
+      console.warn(`[Undo] 用户 ${userId} 在画布 ${canvasId} 上无操作可撤销`);
       return;
     }
 
-    // 验证该笔画是否属于当前用户
-    const { getStrokeById } = require('./mongo-client');
-    const stroke = await getStrokeById(strokeId);
-    
-    if (!stroke) {
-      console.warn(`[Undo] 笔画 ${strokeId} 不存在`);
-      return;
-    }
-
-    if (stroke.user_id !== userId) {
-      console.warn(`[Undo] 用户 ${userId} 无权撤销用户 ${stroke.user_id} 的笔画 ${strokeId}`);
-      ws.send(JSON.stringify({
-        type: 'error',
-        code: 4003,
-        message: '只能撤销自己的笔画'
-      }));
-      return;
-    }
+    // 同步删除 MongoDB（如果该笔画已通过 Kafka 写入的话）
+    console.log(`[Undo] 调用 deleteStrokeById(${deletedStroke.stroke_id})`);
+    await deleteStrokeById(deletedStroke.stroke_id);
+    console.log(`[Undo] MongoDB 删除完成`);
 
     const operation = {
       canvas_id: canvasId,
@@ -621,13 +610,12 @@ async function handleClientMessage(userId, canvasId, data) {
       msg_type: 'undo',
       sequence_id: await getNextSequenceId(),
       user_id: userId,
-      stroke_id: strokeId,
+      stroke_id: deletedStroke.stroke_id,
       timestamp: Date.now(),
     };
 
-    // 从 MongoDB 中删除该笔画
-    await deleteStrokeById(strokeId);
-    console.log(`[Undo] 用户 ${userId} 撤销了笔画 ${strokeId}`);
+    console.log(`[Undo] 用户 ${userId} 撤销了笔画 ${deletedStroke.stroke_id}（画布 ${canvasId}）`);
+    console.log(`[Undo] deletedStroke 详情:`, JSON.stringify({ stroke_id: deletedStroke.stroke_id, canvas_id: deletedStroke.canvas_id, sequence_id: deletedStroke.sequence_id }));
 
     // 广播给所有客户端
     await publish(`canvas:${canvasId}`, operation);

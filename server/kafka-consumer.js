@@ -31,6 +31,17 @@ const consumer = kafka.consumer({ groupId: GROUP_ID });
 let operationBuffer = [];
 
 /**
+ * 被撤销的 stroke_id 集合，用于在批量写入时过滤掉已撤销的笔画。
+ * key: stroke_id, value: true
+ */
+const undoneSet = new Map();
+
+/**
+ * undoneSet 的最大容量，防止内存无限增长。
+ */
+const MAX_UNDONE_SET_SIZE = 10000;
+
+/**
  * 标记当前是否正在执行批量写入，避免定时器和消费回调同时刷盘。
  */
 let flushing = false;
@@ -75,6 +86,20 @@ async function initKafkaConsumer() {
  * @param {object} operation Canvas 操作
  */
 function addToBuffer(operation) {
+  // 如果是 undo 消息，将其对应的 stroke_id 记录到 undoneSet
+  const kind = operation.msg_type || operation.action || operation.type;
+  if (kind === 'undo' && operation.stroke_id) {
+    if (undoneSet.size >= MAX_UNDONE_SET_SIZE) {
+      // 达到上限时清空最早的 1000 条
+      const keys = Array.from(undoneSet.keys()).slice(0, 1000);
+      keys.forEach(k => undoneSet.delete(k));
+    }
+    undoneSet.set(operation.stroke_id, true);
+  }
+
+  // 撤销消息本身不需要写入 MongoDB
+  if (kind === 'undo') return;
+
   operationBuffer.push(operation);
 
   // 达到 500 条时立即批量写入 MongoDB。
@@ -96,8 +121,26 @@ async function flushBuffer(reason) {
   }
 
   flushing = true;
-  const batch = operationBuffer;
+
+  // 过滤掉已经被撤销的笔画（按 stroke_id 精确匹配）
+  const strokeIdsToExclude = new Set(undoneSet.keys());
+  const filteredBatch = operationBuffer.filter(op => {
+    if (op.stroke_id && strokeIdsToExclude.has(op.stroke_id)) {
+      return false;
+    }
+    return true;
+  });
+
+  const excludedCount = operationBuffer.length - filteredBatch.length;
+  const batch = filteredBatch;
   operationBuffer = [];
+
+  // 如果全部被过滤掉了，直接跳过写入
+  if (batch.length === 0) {
+    console.log(`[Kafka] 刷盘跳过（全部被撤销过滤）: excluded=${excludedCount}, reason=${reason}`);
+    flushing = false;
+    return;
+  }
 
   try {
     const byCanvas = {};
@@ -109,11 +152,11 @@ async function flushBuffer(reason) {
     for (const [cid, ops] of Object.entries(byCanvas)) {
       await saveStrokesBatch(ops, cid);
     }
-    console.log(`[MongoDB] 批量保存完成: count=${batch.length}, reason=${reason}`);
+    console.log(`[Kafka] 批量保存完成: count=${batch.length}, excluded=${excludedCount}, reason=${reason}`);
   } catch (err) {
     // 写入失败时把数据放回缓冲区，避免短暂故障导致消息直接丢失。
     operationBuffer = batch.concat(operationBuffer);
-    console.error(`[MongoDB] 批量保存失败，已放回缓冲区: count=${batch.length}, reason=${reason}, error=${err.message}`);
+    console.error(`[Kafka] 批量保存失败，已放回缓冲区: count=${batch.length}, reason=${reason}, error=${err.message}`);
   } finally {
     flushing = false;
   }

@@ -340,9 +340,9 @@ async function clearCanvas(canvasId = 'default') {
 async function deleteStrokeById(strokeId) {
   const collection = getStrokesCollection();
   const result = await collection.deleteOne({ stroke_id: strokeId });
+  console.log(`[MongoDB] deleteStrokeById(${strokeId}): deleted=${result.deletedCount}`);
   return result;
 }
-
 /**
  * 获取画布的操作数量
  *
