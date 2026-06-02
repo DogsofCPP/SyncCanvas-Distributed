@@ -1,6 +1,6 @@
 # SyncCanvas 正式压力测试结果
 
-执行时间：2026-05-31  
+执行时间：2026-05-31；场景二补测时间：2026-06-02  
 测试地址：`http://127.0.0.1:3000`  
 压测脚本：`locust/locustfile.py`  
 认证方式：本地生成合法 JWT，每个虚拟用户使用独立 `username` 和 `token`。该方式用于隔离 WebSocket 发包性能，避免把 bcrypt 注册/登录接口作为本次压测瓶颈。
@@ -18,14 +18,14 @@
 | 场景 | 实际并发 | 主要指标 | 请求数 | 失败数 | 实际吞吐 | P50 | P95 | P99 | 是否达标 |
 | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | 高频作画 | 200 | WS `message echo` | 3927 | 0 | 54.32/s | 2600 ms | 5800 ms | 7100 ms | 未达标 |
-| 冷启动历史加载 | 50 | WS `cold start history` | 1689 | 0 | 10.22/s | 360 ms | 2000 ms | 2900 ms | 未达标 |
+| 冷启动历史加载 | 50 | WS `cold start history` | 965 | 0 | 16.09/s | 780 ms | 1800 ms | 2800 ms | 未达标 |
 | 多画布隔离 | 100 | WS `message echo` | 15312 | 0 | 234.13/s | 1700 ms | 5100 ms | 6700 ms | 未达标 |
 
 说明：
 
 - 三个场景的业务请求均未达到目标 P99。
 - 场景一存在连接与接收失败，整体失败数为 78。
-- 场景二 Locust 到达 60 秒后没有自然退出，已手动停止；CSV 统计文件已生成。
+- 场景二已于 2026-06-02 重新执行，并成功生成 HTML 报告；P99 仍未达标。
 - 场景三没有请求失败，但 P99 和吞吐均未达到目标。
 - Locust 在场景一和场景三中提示本机 CPU 使用率超过 90%，单机压测端可能限制了实际发压能力，结果应理解为“当前本机单进程 Locust + 当前服务部署”的测量结果。
 
@@ -75,33 +75,35 @@ locust/results/draw_200u_2000mps_rerun_failures.csv
 执行命令：
 
 ```powershell
-& 'C:\Users\Lenovo\AppData\Local\Programs\Python\Python312\python.exe' -m locust -f locust/locustfile.py --headless --scenario history -u 50 -r 50 -t 60s --host http://127.0.0.1:3000 --csv locust/results/history_50u_500mps_rerun --html locust/results/history_50u_500mps_rerun.html --only-summary
+& 'C:\Users\Lenovo\AppData\Local\Programs\Python\Python312\python.exe' -m locust -f locust/locustfile.py --headless --scenario history -u 50 -r 50 -t 60s --stop-timeout 5 --host http://127.0.0.1:3000 --csv locust/results/history_50u_500mps_html_20260602 --html locust/results/history_50u_500mps_html_20260602.html --only-summary
 ```
 
 结果文件：
 
 ```text
-locust/results/history_50u_500mps_rerun_stats.csv
-locust/results/history_50u_500mps_rerun_failures.csv
+locust/results/history_50u_500mps_html_20260602.html
+locust/results/history_50u_500mps_html_20260602_stats.csv
+locust/results/history_50u_500mps_html_20260602_failures.csv
+locust/results/history_50u_500mps_html_20260602_stats_history.csv
 ```
 
 关键结果：
 
 | 指标 | 结果 |
 | --- | ---: |
-| cold start history 请求数 | 1689 |
+| cold start history 请求数 | 965 |
 | cold start history 失败数 | 0 |
-| cold start history 吞吐 | 10.22/s |
-| cold start history 平均延迟 | 651.87 ms |
-| cold start history P50 | 360 ms |
-| cold start history P95 | 2000 ms |
-| cold start history P99 | 2900 ms |
+| cold start history 吞吐 | 16.09/s |
+| cold start history 平均延迟 | 865.98 ms |
+| cold start history P50 | 780 ms |
+| cold start history P95 | 1800 ms |
+| cold start history P99 | 2800 ms |
 | 目标 P99 | < 200 ms |
 | 结论 | 未达标 |
 
 备注：
 
-该场景达到运行时间后 Locust 未自然退出，已手动停止。已生成 CSV 统计文件，但未生成 HTML 报告。
+该场景已于 2026-06-02 重新执行，增加 `--stop-timeout 5` 后 Locust 正常收尾，并成功生成 HTML 报告。测试过程中 Locust 提示本机 CPU 使用率超过 90%，结果可能受到单机发压端瓶颈影响。
 
 ## 场景三：多画布隔离
 
