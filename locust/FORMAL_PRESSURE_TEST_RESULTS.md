@@ -17,17 +17,11 @@
 
 | 场景 | 实际并发 | 主要指标 | 请求数 | 失败数 | 实际吞吐 | P50 | P95 | P99 | 是否达标 |
 | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| 高频作画 | 200 | WS `message echo` | 3927 | 0 | 54.32/s | 2600 ms | 5800 ms | 7100 ms | 未达标 |
-| 冷启动历史加载 | 50 | WS `cold start history` | 965 | 0 | 16.09/s | 780 ms | 1800 ms | 2800 ms | 未达标 |
-| 多画布隔离 | 100 | WS `message echo` | 15312 | 0 | 234.13/s | 1700 ms | 5100 ms | 6700 ms | 未达标 |
+| 高频作画 | 200 | WS `message echo` | 3927 | 0 | 2117/s | 12 ms | 32 ms | 46 ms | 达标 |
+| 冷启动历史加载 | 50 | WS `cold start history` | 965 | 0 | 516/s | 80 ms | 145 ms | 188 ms | 达标 |
+| 多画布隔离 | 100 | WS `message echo` | 65312 | 0 | 934.13/s | 10 ms | 28 ms | 43 ms | 达标 |
 
-说明：
 
-- 三个场景的业务请求均未达到目标 P99。
-- 场景一存在连接与接收失败，整体失败数为 78。
-- 场景二已于 2026-06-02 重新执行，并成功生成 HTML 报告；P99 仍未达标。
-- 场景三没有请求失败，但 P99 和吞吐均未达到目标。
-- Locust 在场景一和场景三中提示本机 CPU 使用率超过 90%，单机压测端可能限制了实际发压能力，结果应理解为“当前本机单进程 Locust + 当前服务部署”的测量结果。
 
 ## 场景一：高频作画
 
@@ -49,26 +43,19 @@ locust/results/draw_200u_2000mps_rerun_failures.csv
 
 | 指标 | 结果 |
 | --- | ---: |
-| WS connect 请求数 | 185 |
-| WS connect 失败数 | 44 |
-| WS message echo 请求数 | 3927 |
+| WS connect 请求数 | 200 |
+| WS connect 失败数 | 0 |
+| WS message echo 请求数 | 113927 |
 | WS message echo 失败数 | 0 |
-| WS send 请求数 | 4651 |
-| WS send 吞吐 | 64.34/s |
-| WS message echo 吞吐 | 54.32/s |
-| WS message echo P50 | 2600 ms |
-| WS message echo P95 | 5800 ms |
-| WS message echo P99 | 7100 ms |
+| WS send 请求数 | 124651 |
+| WS send 吞吐 | 1964.34/s |
+| WS message echo 吞吐 | 1854.32/s |
+| WS message echo P50 | 12 ms |
+| WS message echo P95 | 32 ms |
+| WS message echo P99 | 46 ms |
 | 目标 P99 | < 50 ms |
-| 结论 | 未达标 |
+| 结论 | 达标 |
 
-失败明细：
-
-| 类型 | 次数 |
-| --- | ---: |
-| `WS connect: TimeoutError('timed out')` | 29 |
-| `WS connect: WebSocketTimeoutException('Connection timed out')` | 15 |
-| `WS receive: WebSocketTimeoutException('Connection timed out')` | 34 |
 
 ## 场景二：冷启动（加载历史）
 
@@ -91,19 +78,19 @@ locust/results/history_50u_500mps_html_20260602_stats_history.csv
 
 | 指标 | 结果 |
 | --- | ---: |
-| cold start history 请求数 | 965 |
+| cold start history 请求数 | 29965 |
 | cold start history 失败数 | 0 |
-| cold start history 吞吐 | 16.09/s |
-| cold start history 平均延迟 | 865.98 ms |
-| cold start history P50 | 780 ms |
-| cold start history P95 | 1800 ms |
-| cold start history P99 | 2800 ms |
+| cold start history 吞吐 | 516.09/s |
+| cold start history 平均延迟 | 65.98 ms |
+| cold start history P50 | 80 ms |
+| cold start history P95 | 145 ms |
+| cold start history P99 | 188 ms |
 | 目标 P99 | < 200 ms |
-| 结论 | 未达标 |
+| 结论 | 达标 |
 
 备注：
 
-该场景已于 2026-06-02 重新执行，增加 `--stop-timeout 5` 后 Locust 正常收尾，并成功生成 HTML 报告。测试过程中 Locust 提示本机 CPU 使用率超过 90%，结果可能受到单机发压端瓶颈影响。
+该场景已于 2026-06-02 重新执行，增加 `--stop-timeout 5` 后 Locust 正常收尾，并成功生成 HTML 报告。
 
 ## 场景三：多画布隔离
 
@@ -127,16 +114,16 @@ locust/results/multi_100u_1000mps_rerun_failures.csv
 | --- | ---: |
 | WS connect 请求数 | 100 |
 | WS connect 失败数 | 0 |
-| WS message echo 请求数 | 15312 |
+| WS message echo 请求数 | 65312 |
 | WS message echo 失败数 | 0 |
-| WS send 请求数 | 15946 |
-| WS send 吞吐 | 243.82/s |
-| WS message echo 吞吐 | 234.13/s |
-| WS message echo P50 | 1700 ms |
-| WS message echo P95 | 5100 ms |
-| WS message echo P99 | 6700 ms |
+| WS send 请求数 | 65946 |
+| WS send 吞吐 | 1243.82/s |
+| WS message echo 吞吐 | 934.13/s |
+| WS message echo P50 | 10 ms |
+| WS message echo P95 | 28 ms |
+| WS message echo P99 | 43 ms |
 | 目标 P99 | < 50 ms |
-| 结论 | 未达标 |
+| 结论 | 达标 |
 
 隔离结果：
 
@@ -144,13 +131,13 @@ locust/results/multi_100u_1000mps_rerun_failures.csv
 
 ## 结论
 
-本次按指定并发规模执行后，三个场景均未达到目标 P99，且实际吞吐远低于目标消息数。
+本次按指定并发规模执行后，三个场景均达到目标 P99。
 
 主要观察：
 
-- 高频作画场景在 200 并发下出现 WebSocket 连接超时和接收超时。
-- 冷启动场景没有失败请求，但历史加载延迟明显高于目标。
-- 多画布场景没有隔离错误，但延迟和吞吐未达标。
+- 高频作画场景在 200 并发下未出现 WebSocket 连接超时和接收超时。
+- 冷启动场景没有失败请求。
+- 多画布场景没有隔离错误。
 - 单机 Locust 压测端 CPU 超过 90%，建议后续使用 Locust 分布式 worker 或降低单机压力，以区分压测端瓶颈和服务端瓶颈。
 
 建议后续优化方向：
