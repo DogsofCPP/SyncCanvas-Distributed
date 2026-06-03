@@ -1,81 +1,106 @@
 # SyncCanvas-Distributed
 
-**分布式实时协作画布** - 武汉大学分布式系统大作业
+一个面向分布式系统课程设计的实时协作画布项目。支持多人同时在线绘制、实时同步、历史回放与画布数据持久化，适合演示分布式消息广播、状态一致性和协同编辑等核心能力。
 
-## Summary
+## 项目概览
 
-一个高性能的分布式实时协作画布平台，支持多人同时绘画、实时同步。采用"边画边出"策略，50ms 内将用户笔画同步给所有在线用户。基于 WebSocket + Redis Pub/Sub 进行实时广播，Kafka 作为异步消息队列，MongoDB 持久化存储操作日志。无需房间功能，所有用户共享同一个全局画布。
+- **实时协作**：基于 WebSocket 实现低延迟双向通信
+- **边画边出**：通过 50ms 级别的增量发送机制，尽量缩短笔迹同步延迟
+- **全局或多画布协作**：支持按画布隔离协作空间，便于多人同时使用
+- **状态同步**：依赖全局序列号与同步接口，保证断线重连和补包恢复
+- **持久化存储**：可将操作日志、画布快照等数据写入数据库，便于回放和恢复
+- **流量优化**：对采样点做压缩，降低网络与存储开销
 
-## Description
+## 技术栈
 
-### 核心技术栈
+| 模块 | 技术 | 作用 |
+| --- | --- | --- |
+| 实时通信 | WebSocket | 客户端与服务端双向通信 |
+| 广播与缓存 | Redis Pub/Sub | 协同消息广播与序列控制 |
+| 异步处理 | Kafka | 消息缓冲与解耦 |
+| 数据存储 | MongoDB | 操作日志与画布数据持久化 |
+| 前端绘制 | HTML5 Canvas | 矢量绘图与交互渲染 |
+| 测试监控 | Locust / Prometheus | 压测与指标观测 |
 
-| 层级 | 技术 | 用途 |
-|------|------|------|
-| 通信 | WebSocket + Redis Pub/Sub | 实时双向通信与广播 |
-| 队列 | Kafka | 异步消息缓冲 |
-| 存储 | MongoDB | 操作日志持久化、SVG 快照 |
-| 前端 | HTML5 Canvas | 矢量绘画引擎 |
-| 测试 | Locust + Prometheus | 压测与监控 |
+## 核心功能
 
-### 核心特性
+- 画笔绘制与橡皮擦操作
+- 光标位置同步
+- 画布历史回放
+- 断线重连与增量同步
+- 点序列压缩与数据裁剪
+- 压测与可观测性支持
 
-- **边画边出**：50ms 定时器触发发送，无需等待抬笔
-- **全局画布**：所有用户共享同一画布，无房间隔离
-- **历史重放**：支持从任意 sequence_id 恢复画布状态
-- **冲突处理**：乐观更新 + sequence_id 序号同步
-- **流量压缩**：Douglas-Peucker 算法点压缩
+## 目录结构
 
-### 团队分工
+```text
+SyncCanvas-Distributed/
+├── server/            # 服务端逻辑：WebSocket、HTTP、消息队列、Redis
+├── public/            # 前端页面与 Canvas 交互逻辑
+├── models/             # 数据模型定义
+├── docs/               # 协议、接口等说明文档
+├── locust/             # 压测脚本与结果
+├── docker-compose.yml # 基础设施编排
+└── README.md           # 项目说明
+```
 
-| 成员 | 职责 |
-|------|------|
-| A | Redis 序列号、Kafka/MongoDB 持久化、快照生成 |
-| B | WebSocket 网关、Redis Pub/Sub 广播、HTTP 接口 |
-| C | Canvas 渲染、历史重放、光标同步、UI 交互 |
-| D | 输入采集节流、DP 压缩、压测脚本、监控 |
+## 快速开始
 
-### 快速启动
+### 1. 启动基础设施
 
 ```bash
-# 1. 启动基础设施
 docker-compose up -d
+```
 
-# 2. 安装依赖
-npm install ws express ioredis kafkajs mongoose
+### 2. 安装依赖
 
-# 3. 启动 WebSocket 服务
+根据实际运行环境安装项目依赖，例如：
+
+```bash
+npm install
+```
+
+如果项目分服务运行，也可以按各自目录分别安装所需依赖。
+
+### 3. 启动服务
+
+```bash
 node server/ws-server.js
-
-# 4. 打开浏览器
-# http://localhost:3000
 ```
 
-### 项目结构
+如果项目还包含 HTTP 接口或前端静态服务，请按项目中的实际入口分别启动。
 
-```
-SyncCanvas-Distributed/
-├── server/               # B: WebSocket 网关 + Redis 广播
-│   ├── ws-server.js      # B: WebSocket 服务端
-│   ├── redis-client.js   # B: Redis 操作
-│   ├── kafka-producer.js  # A: 消息入队
-│   ├── kafka-consumer.js  # A: 消息消费
-│   └── api.js            # A: HTTP 接口
-├── public/               # C: 前端渲染
-│   ├── index.html        # C: 主页面
-│   ├── draw.js           # C: Canvas 渲染引擎
-│   └── collector.js      # D: 输入采集器（50ms 定时）
-├── models/               # A: MongoDB Schema
-├── docs/
-│   └── PROTOCOL.md       # 通信协议文档
-├── docker-compose.yml    # A: 基础设施
-└── TASK_ASSIGNMENT.md    # 任务分配
-```
+### 4. 打开页面
 
-### 通信协议
+在浏览器中访问项目提供的前端入口地址，开始协同绘画。
 
-详见 [docs/PROTOCOL.md](docs/PROTOCOL.md)
+## 通信协议
 
-- WebSocket 端点：`ws://localhost:3000/ws`
-- 消息格式：`{ action: "stroke"|"erase", stroke_id, points[], color, width }`
-- 全局序列号：Redis INCR 生成，保证顺序一致
+详细协议请参见 `docs/PROTOCOL.md`。
+
+常见端点示例：
+
+- WebSocket：`ws://localhost:3000/ws?canvas_id=<canvas_id>`
+- 认证接口：`POST /api/v1/auth/register`
+- 认证接口：`POST /api/v1/auth/login`
+- 画布接口：`POST /api/v1/canvases`
+- 画布接口：`GET /api/v1/canvases`
+
+## 使用说明
+
+1. 先完成注册或登录。
+2. 创建或选择一个画布。
+3. 进入画布后即可开始绘制。
+4. 断线后可通过同步接口恢复缺失操作。
+
+## 相关文档
+
+- `docs/PROTOCOL.md`：通信协议说明
+- `locust/README.md`：压测说明
+- `locust/LOADTEST.md`：压测方案
+- `locust/FORMAL_PRESSURE_TEST_RESULTS.md`：正式压测结果
+- `SCHEMA.md`：数据结构说明
+
+## 说明
+
+仓库中原先用于课程分工的文档已移除，README 仅保留项目本身的使用与技术说明，便于后续维护与展示。
